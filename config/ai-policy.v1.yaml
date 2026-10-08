@@ -1,0 +1,54 @@
+# AURIX AI policy v1 — Qwen/Laya/market-ML/training configuration.
+# Model names are configurable here; application code must not hardcode them.
+# Training/AI never enables live trading (safety.allow_live equivalent: promotion gates).
+version: ai-policy-v1
+
+llm:
+  provider: ollama
+  model: qwen3:4b
+  endpoint: http://127.0.0.1:11434
+  timeout_ms: 120000
+  generation:
+    temperature: 0.2
+    max_tokens: 512
+  allowed_callers:
+    - research-agents
+    - analyst-assistant
+  # Qwen is reasoning/synthesis only; NEVER authoritative for risk/execution/margin/kill-switches.
+
+laya:
+  model: convaiinnovations/laya
+  device_policy: auto  # auto | cpu | cuda (auto uses GPU only when resource checks pass)
+  max_len: 512
+  min_confidence: null
+  max_vram_mb: 1024  # refuse GPU load above this budget (4 GB total shared with Ollama)
+
+market_ml:
+  model_type: sgd-logloss
+  features_version: feat-v1
+  label_version: label-v1
+  label_horizon_bars: 5
+  label_threshold: 0.005
+  hyperparams:
+    alpha: 0.0001
+    learning_rate: optimal
+    eta0: 0.0
+    random_state: 7
+  preprocessing_version: prep-v1
+
+training:
+  device_policy: auto  # auto | cpu | cuda
+  epochs: 5
+  checkpoint_every_epochs: 1
+  seed: 7
+  max_samples: null
+  out_dir: training_runs
+
+registry:
+  # New models enter as CANDIDATE and NEVER auto-activate. Explicit promote() only.
+  initial_state: CANDIDATE
+  gated_transitions:
+    - [CANDIDATE, VALIDATED]
+    - [VALIDATED, PAPER]
+    - [PAPER, APPROVED]
+    - [APPROVED, ACTIVE]

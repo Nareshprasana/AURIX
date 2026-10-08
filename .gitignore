@@ -8,6 +8,7 @@ credentials.json
 
 # Runtime data (never commit)
 data/
+training_runs/
 *.db
 *.db-wal
 *.db-shm
