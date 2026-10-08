@@ -22,4 +22,29 @@ describe('orchestrator', () => {
     expect(isLiveAllowed(p, 'PAPER')).toBe(false);
     expect(isLiveAllowed({ ...p, state: 'ACTIVE' }, 'AUTONOMOUS_LIVE')).toBe(false);
   });
+
+  it('records allowed transitions in the audit log', () => {
+    const m = new ModeMachine();
+    m.transition('PAPER');
+    const log = m.getTransitions();
+    expect(log).toHaveLength(1);
+    expect(log[0]).toMatchObject({ from: 'RESEARCH', to: 'PAPER', allowed: true });
+    expect(typeof log[0]?.at).toBe('number');
+  });
+
+  it('records rejected live attempts and stays in current mode', () => {
+    const m = new ModeMachine();
+    expect(() => m.transition('AUTONOMOUS_LIVE')).toThrow(/impossible/);
+    expect(m.mode).toBe('RESEARCH');
+    expect(m.getTransitions()).toHaveLength(1);
+    expect(m.getTransitions()[0]).toMatchObject({ to: 'AUTONOMOUS_LIVE', allowed: false });
+  });
+
+  it('restart resets to RESEARCH (no escalation possible)', () => {
+    const m = new ModeMachine();
+    m.transition('PAPER');
+    const fresh = new ModeMachine();
+    expect(fresh.mode).toBe('RESEARCH');
+    expect(fresh.getTransitions()).toHaveLength(0);
+  });
 });

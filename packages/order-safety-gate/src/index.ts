@@ -27,7 +27,11 @@ export function validateOrder(cmd: OrderCmd, ctx: SafetyContext): SafetyVerdict 
   if (cmd.orderType !== 'MARKET' && cmd.orderType !== 'LIMIT') reject(`invalid order type: ${cmd.orderType}`);
   // 5. quantity
   if (!Number.isFinite(cmd.quantity) || cmd.quantity <= 0) reject(`invalid quantity: ${cmd.quantity}`);
+  if (Number.isFinite(cmd.quantity) && !Number.isInteger(cmd.quantity)) reject(`invalid quantity (not integer): ${cmd.quantity}`);
   if (cmd.quantity > ctx.brokerMaxQty) reject(`oversized quantity: ${cmd.quantity} > max ${ctx.brokerMaxQty}`);
+  if (ctx.brokerMinQty !== undefined && cmd.quantity < ctx.brokerMinQty) {
+    reject(`quantity below broker minimum: ${cmd.quantity} < ${ctx.brokerMinQty}`);
+  }
   if (ctx.instrument && cmd.quantity % ctx.instrument.lot_size !== 0) {
     reject(`invalid lot size: qty ${cmd.quantity} not multiple of ${ctx.instrument.lot_size}`);
   }

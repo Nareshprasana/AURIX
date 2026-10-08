@@ -81,4 +81,67 @@ describe('risk-engine', () => {
       expect(v.allow).toBe(false);
     }
   });
+
+  it('rejects margin utilization breach', () => {
+    const v = evaluate(
+      { instrumentId: 'X', notional: 1_000, quantity: 1, sector: 'Energy', eligibility: 'LEGAL', marketStatus: 'OPEN' },
+      { ...BASE_PORTFOLIO, marginUtilPct: 80 },
+      POLICY
+    );
+    expect(v.allow).toBe(false);
+    expect(v.reasons.join(' ')).toMatch(/margin/);
+  });
+
+  it('rejects top-5 concentration breach', () => {
+    const v = evaluate(
+      { instrumentId: 'X', notional: 1_000, quantity: 1, sector: 'Energy', eligibility: 'LEGAL', marketStatus: 'OPEN' },
+      { ...BASE_PORTFOLIO, top5ConcentrationPct: 45 },
+      POLICY
+    );
+    expect(v.allow).toBe(false);
+    expect(v.reasons.join(' ')).toMatch(/concentration/);
+  });
+
+  it('applies abnormal-regime haircut to the notional cap', () => {
+    // Normal cap = 2% of 1M = 20k. Haircut 50% -> 10k in HIGH_VOLATILITY.
+    const fit = evaluate(
+      { instrumentId: 'X', notional: 15_000, quantity: 150, sector: 'Energy', eligibility: 'LEGAL', marketStatus: 'OPEN', regime: 'HIGH_VOLATILITY' },
+      BASE_PORTFOLIO,
+      POLICY
+    );
+    expect(fit.allow).toBe(false);
+    const small = evaluate(
+      { instrumentId: 'X', notional: 5_000, quantity: 50, sector: 'Energy', eligibility: 'LEGAL', marketStatus: 'OPEN', regime: 'HIGH_VOLATILITY' },
+      BASE_PORTFOLIO,
+      POLICY
+    );
+    expect(small.allow).toBe(true);
+    const calm = evaluate(
+      { instrumentId: 'X', notional: 15_000, quantity: 150, sector: 'Energy', eligibility: 'LEGAL', marketStatus: 'OPEN', regime: 'TRENDING_BULL' },
+      BASE_PORTFOLIO,
+      POLICY
+    );
+    expect(calm.allow).toBe(true);
+  });
+
+  it('rejects illiquid proposals (ADV share and spread)', () => {
+    const adv = evaluate(
+      { instrumentId: 'X', notional: 1_000, quantity: 1, sector: 'Energy', eligibility: 'LEGAL', marketStatus: 'OPEN', notionalAdvPct: 9 },
+      BASE_PORTFOLIO,
+      POLICY
+    );
+    expect(adv.allow).toBe(false);
+    const spread = evaluate(
+      { instrumentId: 'X', notional: 1_000, quantity: 1, sector: 'Energy', eligibility: 'LEGAL', marketStatus: 'OPEN', spreadBps: 120 },
+      BASE_PORTFOLIO,
+      POLICY
+    );
+    expect(spread.allow).toBe(false);
+    const liquid = evaluate(
+      { instrumentId: 'X', notional: 1_000, quantity: 1, sector: 'Energy', eligibility: 'LEGAL', marketStatus: 'OPEN', notionalAdvPct: 1, spreadBps: 10 },
+      BASE_PORTFOLIO,
+      POLICY
+    );
+    expect(liquid.allow).toBe(true);
+  });
 });

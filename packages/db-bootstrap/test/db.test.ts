@@ -7,6 +7,7 @@ describe('db-bootstrap', () => {
       expect(CORE_DDL).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS ${t}`));
     }
     expect(CORE_DDL).toMatch(/journal_mode=WAL/);
+    expect(CORE_DDL).toMatch(/CREATE INDEX IF NOT EXISTS idx_events_poll/);
   });
 
   it('knowledge DDL has append-only knowledge_events (no UPDATE/DELETE API)', () => {

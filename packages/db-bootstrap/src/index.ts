@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS promotions(
   strategy_versions_json TEXT NOT NULL, validation_results_ref TEXT NOT NULL,
   paper_trading_results_ref TEXT NOT NULL, approval_timestamp TEXT,
   operator_identity TEXT, state TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_events_poll ON events(status, type, created_at);
 `;
 
 export const KNOWLEDGE_DDL = `

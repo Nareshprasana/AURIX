@@ -74,4 +74,17 @@ describe('Phase 1 safety proofs', () => {
     ).rejects.toThrow();
     expect(await sim.fetchPositions()).toHaveLength(0);
   });
+
+  it('live mode is rejected by execution even with ACTIVE promotion claim + sim broker', async () => {
+    const sim = new BrokerSim();
+    await expect(
+      routeOrder({
+        cmd: cmd(),
+        risk: { allow: true, cappedQty: 10, reasons: ['ok'], policyVersion: 'v1' },
+        safetyCtx: ctx({ mode: 'AUTONOMOUS_LIVE', promotionActive: true }),
+        broker: sim
+      })
+    ).rejects.toThrow(/live mode/);
+    expect(await sim.fetchPositions()).toHaveLength(0);
+  });
 });

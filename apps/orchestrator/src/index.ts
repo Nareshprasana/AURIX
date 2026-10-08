@@ -6,6 +6,7 @@ const LIVE_MODES: Mode[] = ['CONTROLLED_LIVE', 'AUTONOMOUS_LIVE'];
 
 export class ModeMachine {
   private history: Mode[] = [];
+  private transitions: ModeTransition[] = [];
   constructor(private current: Mode = 'RESEARCH') {
     this.history.push(current);
   }
@@ -15,8 +16,10 @@ export class ModeMachine {
   transition(next: Mode): void {
     // Phase 1: live transitions unreachable — no ACTIVE promotion can exist.
     if (LIVE_MODES.includes(next)) {
+      this.transitions.push({ from: this.current, to: next, at: Date.now(), allowed: false, reason: 'Phase 1: no ACTIVE promotion can exist' });
       throw new Error(`Phase 1: transition to ${next} impossible without ACTIVE promotion`);
     }
+    this.transitions.push({ from: this.current, to: next, at: Date.now(), allowed: true });
     this.history.push(next);
     this.current = next;
   }
@@ -26,6 +29,18 @@ export class ModeMachine {
   getHistory(): Mode[] {
     return [...this.history];
   }
+  /** Append-only transition audit (incl. rejected attempts). Restart resets to RESEARCH. */
+  getTransitions(): ModeTransition[] {
+    return [...this.transitions];
+  }
+}
+
+export interface ModeTransition {
+  from: Mode;
+  to: Mode;
+  at: number;
+  allowed: boolean;
+  reason?: string;
 }
 
 export function createDraftPromotion(systemVersion: string): LiveTradingPromotion {

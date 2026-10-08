@@ -1,4 +1,10 @@
 // @aurix/event-bus — SQLite outbox abstraction (SQLite backend only, Phase 1).
+//
+// Delivery semantics: AT-LEAST-ONCE. claim() re-delivers CLAIMED-but-unacked
+// events on subsequent claims, and FAILED events are retried indefinitely.
+// Consumers MUST be idempotent: execution deduplicates via idempotency_keys,
+// publish() collapses duplicate idempotency keys to the original event.
+// No event is silently dropped: fail() records last_error + attempts.
 export interface BusEvent {
   id: string;
   type: string;

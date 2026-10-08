@@ -117,4 +117,23 @@ describe('order-safety-gate', () => {
   it('rejects stale market data', () => {
     expect(validateOrder(baseCmd(), baseCtx({ marketDataTs: NOW - 600_000 })).verdict).toBe('REJECT');
   });
+  it('rejects invalid side', () => {
+    expect(validateOrder(baseCmd({ side: 'HOLD' as never }), baseCtx()).verdict).toBe('REJECT');
+  });
+  it('rejects invalid order type', () => {
+    expect(validateOrder(baseCmd({ orderType: 'STOP' as never }), baseCtx()).verdict).toBe('REJECT');
+  });
+  it('rejects missing idempotency key', () => {
+    expect(validateOrder(baseCmd({ clientOrderId: '' }), baseCtx()).verdict).toBe('REJECT');
+  });
+  it('rejects fractional quantity (must be integer)', () => {
+    expect(validateOrder(baseCmd({ quantity: 10.5 }), baseCtx()).verdict).toBe('REJECT');
+  });
+  it('rejects quantity below broker minimum', () => {
+    expect(validateOrder(baseCmd({ quantity: 5 }), baseCtx({ brokerMinQty: 10 })).verdict).toBe('REJECT');
+  });
+  it('ALLOWs a valid MARKET order', () => {
+    const v = validateOrder(baseCmd({ orderType: 'MARKET', limitPrice: null }), baseCtx());
+    expect(v.verdict).toBe('ALLOW');
+  });
 });
