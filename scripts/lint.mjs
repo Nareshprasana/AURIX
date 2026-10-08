@@ -108,6 +108,40 @@ for (const rel of RESEARCH_FILES) {
     failures++;
   }
 }
+// Strategy/backtest: simulation only. No broker/execution/live-trading, no
+// dynamic code execution, no training coupling, no gateway.
+const STRATEGY_FILES = [
+  'packages/strategy/src/types.ts',
+  'packages/strategy/src/indicators.ts',
+  'packages/strategy/src/families.ts',
+  'packages/strategy/src/regime.ts',
+  'packages/strategy/src/costs.ts',
+  'packages/strategy/src/metrics.ts',
+  'packages/strategy/src/signals.ts',
+  'apps/backtest/src/datasets.ts',
+  'apps/backtest/src/engine.ts',
+  'apps/backtest/src/methods.ts',
+  'apps/backtest/src/registry.ts',
+  'apps/backtest/src/hypothesis.ts',
+  'apps/backtest/src/integration.ts'
+];
+for (const rel of STRATEGY_FILES) {
+  const p = join(ROOT, rel);
+  if (!existsSync(p)) continue;
+  const text = readFileSync(p, 'utf8');
+  if (/@aurix\/(broker-sim|broker-kite|execution-service|risk-engine|portfolio-engine|model-gateway)|research-agents|ml-training|kiteconnect/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: strategy layer must not touch broker/execution/risk/portfolio/gateway/training`);
+    failures++;
+  }
+  if (/\bplaceOrder\b|BrokerPort/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: strategy layer must not construct real orders`);
+    failures++;
+  }
+  if (/\beval\s*\(|new Function\s*\(|child_process|execSync|spawnSync/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: no dynamic code execution in strategy layer`);
+    failures++;
+  }
+}
 if (failures > 0) {
   console.error(`${failures} lint violation(s)`);
   process.exit(1);

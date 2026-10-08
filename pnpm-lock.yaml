@@ -26,6 +26,27 @@ importers:
 
   apps/api: {}
 
+  apps/backtest:
+    dependencies:
+      '@aurix/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@aurix/knowledge-service':
+        specifier: workspace:*
+        version: link:../knowledge-service
+      '@aurix/market-data':
+        specifier: workspace:*
+        version: link:../../packages/market-data
+      '@aurix/memory-manager':
+        specifier: workspace:*
+        version: link:../memory-manager
+      '@aurix/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      '@aurix/strategy':
+        specifier: workspace:*
+        version: link:../../packages/strategy
+
   apps/brokers/broker-kite:
     dependencies:
       '@aurix/contracts':
@@ -165,6 +186,12 @@ importers:
         version: link:../contracts
 
   packages/risk-engine:
+    dependencies:
+      '@aurix/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
+  packages/strategy:
     dependencies:
       '@aurix/contracts':
         specifier: workspace:*
