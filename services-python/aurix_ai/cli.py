@@ -172,6 +172,86 @@ def _cmd_registry(args) -> int:
     return 0
 
 
+def _cmd_history_fetch(args) -> int:
+    from .history import Eod2Provider, TejBazaarProvider, _get
+    providers = {"tej": TejBazaarProvider(), "eod2": Eod2Provider()}
+    if args.provider != "both":
+        providers = {args.provider: providers[args.provider]}
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    summary = {"provider_set": list(providers), "symbols": {}, "raw_dir": args.out}
+    for pname, prov in providers.items():
+        for sym in symbols:
+            if pname == "tej":
+                url = (f"https://api.tejhq.dev/v1/ohlcv/nse/{sym}"
+                       f"?from={args.from_date}&to={args.to_date}")
+                payload = _get(url)
+            else:
+                url = f"https://raw.githubusercontent.com/BennyThadikaran/eod2_data/main/daily/{sym.lower()}.csv"
+                payload = _get(url, timeout=120)
+            from .history import store_raw
+            import os as _os
+            rec = store_raw(_os.path.join(args.out, "raw"), pname, sym, payload)
+            # Parse immediately to count rows (cheap, proves parse works).
+            rows = prov.fetch(sym, args.from_date, args.to_date) if pname == "tej" else prov.fetch(sym, args.from_date, args.to_date)
+            summary["symbols"].setdefault(sym, {})[pname] = {"rows": len(rows), **rec}
+    print(json.dumps({"status": "OK", "fetch": summary}, indent=2))
+    return 0
+
+
+def _cmd_history_build(args) -> int:
+    import os as _os
+    from .datasets import (DatasetSpec, build_features_labels, write_dataset)
+    from .history import (Eod2Provider, TejBazaarProvider, cross_check,
+                          to_backtest_bars, to_training_bars, validate_rows)
+    prov = TejBazaarProvider() if args.provider == "tej" else Eod2Provider()
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    clean_by_symbol, quality = {}, {}
+    for sym in symbols:
+        rows = prov.fetch(sym, args.from_date, args.to_date)
+        rep = validate_rows(rows)
+        quality[sym] = {"verdict": rep["verdict"], "n_raw": rep["n_raw"],
+                        "n_clean": len(rep["clean"]),
+                        "n_quarantined": len(rep["quarantined"]),
+                        "quarantine_reasons": sorted({r for q in rep["quarantined"] for r in q["reasons"]})}
+        if rep["verdict"] == "BLOCK" or not rep["clean"]:
+            raise SystemExit(f"quality BLOCK/empty for {sym}: {quality[sym]}")
+        clean_by_symbol[sym] = rep["clean"]
+    check = None
+    if args.cross_check:
+        sec = Eod2Provider() if args.provider == "tej" else TejBazaarProvider()
+        diffs = {}
+        for sym in symbols:
+            try:
+                other = sec.fetch(sym, args.from_date, args.to_date)
+                diffs[sym] = cross_check(clean_by_symbol[sym], other)
+            except Exception as e:
+                diffs[sym] = {"error": str(e)}
+        check = diffs
+    bars = to_training_bars(clean_by_symbol)
+    X, y, ts, inst = build_features_labels(bars, args.horizon, args.threshold)
+    spec = DatasetSpec(dataset_id=args.id, version="v1", instruments=tuple(symbols),
+                       n_bars=sum(len(v) for v in clean_by_symbol.values()),
+                       seed=7, horizon_bars=args.horizon, threshold=args.threshold,
+                       start_ts=int(min(ts)))
+    manifest = write_dataset(args.out + "/datasets", spec, X, y, ts, inst, extra={
+        "source": prov.name, "source_ref": "tejhq/indian-markets + api.tejhq.dev" if args.provider == "tej" else "BennyThadikaran/eod2_data@main",
+        "schema_version": "hist-schema-v1",
+        "adjustment_policy": prov.adjustment_policy,
+        "quality": quality, "cross_check": check,
+        "date_range_requested": [args.from_date, args.to_date],
+    })
+    bt = to_backtest_bars(clean_by_symbol)
+    bdir = _os.path.join(args.out, "processed", manifest["dataset_version"])
+    _os.makedirs(bdir, exist_ok=True)
+    with open(_os.path.join(bdir, "backtest-bars.json"), "w") as f:
+        json.dump(bt, f)
+    with open(_os.path.join(bdir, "quality.json"), "w") as f:
+        json.dump(quality, f, indent=2)
+    print(json.dumps({"status": "OK", "manifest": manifest,
+                      "n_backtest_bars": len(bt)}, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aurix-train")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -193,6 +273,14 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("registry"); s.add_argument("--db", required=True); s.add_argument("--action", choices=["register", "promote", "active"], required=True)
     s.add_argument("--model-id", default=None); s.add_argument("--run-id", default=None); s.add_argument("--sha", default=None)
     s.add_argument("--to", default=None); s.add_argument("--operator", default="operator"); s.add_argument("--reason", default=""); s.set_defaults(fn=_cmd_registry)
+    s = sub.add_parser("history-fetch"); s.add_argument("--symbols", required=True); s.add_argument("--from-date", required=True)
+    s.add_argument("--to-date", required=True); s.add_argument("--provider", default="tej", choices=["tej", "eod2", "both"])
+    s.add_argument("--out", required=True); s.set_defaults(fn=_cmd_history_fetch)
+    s = sub.add_parser("history-build"); s.add_argument("--symbols", required=True); s.add_argument("--from-date", required=True)
+    s.add_argument("--to-date", required=True); s.add_argument("--provider", default="tej", choices=["tej", "eod2"])
+    s.add_argument("--out", required=True); s.add_argument("--id", default="aurix-nse-daily")
+    s.add_argument("--horizon", type=int, default=5); s.add_argument("--threshold", type=float, default=0.005)
+    s.add_argument("--cross-check", action="store_true"); s.set_defaults(fn=_cmd_history_build)
     return p
 
 

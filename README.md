@@ -100,6 +100,17 @@ pnpm verify:ai       # live Qwen check + artifact consistency (needs Ollama)
 Phase proof scripts: `pnpm verify:cumulative|strategy|portfolio|execution`
 (plus sqlite/knowledge/sync/memory/research).
 
+## Historical Data
+
+- Primary source: **tej-bazaar** (`tejhq/indian-markets`, NSE 2010→today EOD OHLCV, raw bhavcopy); secondary validation: **eod2_data** (adjusted CSVs). See `docs/history-data.md` for the full evaluation.
+- Setup: none beyond `.venv` (stdlib `urllib` only — no new dependencies).
+- Acquisition: `aurix-train history-fetch --symbols RELIANCE,INFY --from-date 2022-01-01 --to-date 2024-12-31 --provider tej --out data` (run from `services-python/` with `../.venv` python; same pattern as Training above).
+- Dataset generation: `aurix-train history-build --symbols ... --provider tej --out data --cross-check` → validated rows, quality report, training dataset (`data/datasets/`), backtest bars (`data/processed/`).
+- Validation: `PASS`/`QUARANTINE`/`BLOCK` with preserved reasons; manifests carry source, schema version, adjustment policy, checksums.
+- Licensing: MIT code upstream; exchange data stored locally only, no redistribution claimed (`LICENSE_STATUS(data-redistribution) = UNKNOWN`).
+- Training usage: emitted datasets load via the existing `train`/`evaluate` commands (compat run verified).
+- Backtesting usage: `node --import ./scripts/aurix-register.mjs scripts/verify-history-data.mjs <dataset-version>` runs real bars through `buildDataset` + `runBacktest` (integrity proof, not a profitability claim).
+
 ## Resource usage
 
 Designed for the available box (4 GB GPU, CPU fallback everywhere): lightweight

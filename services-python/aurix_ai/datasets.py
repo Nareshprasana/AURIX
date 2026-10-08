@@ -152,7 +152,7 @@ def dataset_version_id(spec: DatasetSpec) -> str:
 
 
 def write_dataset(root: str, spec: DatasetSpec, X: np.ndarray, y: np.ndarray,
-                  ts: np.ndarray, instruments: list) -> dict:
+                  ts: np.ndarray, instruments: list, extra: dict | None = None) -> dict:
     """Write immutable versioned dataset. Refuses overwrite on checksum mismatch."""
     version = dataset_version_id(spec)
     ddir = os.path.join(root, version)
@@ -190,6 +190,12 @@ def write_dataset(root: str, spec: DatasetSpec, X: np.ndarray, y: np.ndarray,
         "test_range": [int(ts[test[0]]), int(ts[test[-1]])],
         "seed": spec.seed,
     }
+    if extra:
+        protected = {"checksum_sha256", "n_rows", "class_balance", "train_range",
+                     "val_range", "test_range", "date_range"}
+        for k, v in extra.items():
+            if k not in protected:
+                manifest[k] = v
     with open(os.path.join(ddir, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2, sort_keys=True)
     return manifest
