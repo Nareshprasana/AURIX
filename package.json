@@ -14,7 +14,8 @@
     "verify:knowledge": "node --import ./scripts/aurix-register.mjs scripts/verify-knowledge-sqlite.mjs",
     "verify:sync": "node --import ./scripts/aurix-register.mjs scripts/verify-sync-sqlite.mjs",
     "verify:memory": "node --import ./scripts/aurix-register.mjs scripts/verify-memory.mjs",
-    "verify:research": "node --import ./scripts/aurix-register.mjs scripts/verify-research.mjs"
+    "verify:research": "node --import ./scripts/aurix-register.mjs scripts/verify-research.mjs",
+    "verify:cumulative": "node --import ./scripts/aurix-register.mjs scripts/verify-cumulative.mjs"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
