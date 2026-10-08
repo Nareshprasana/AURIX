@@ -252,6 +252,162 @@ def _cmd_history_build(args) -> int:
     return 0
 
 
+def _cmd_auto_submit(args) -> int:
+    from .orchestrate import ExperimentRegistry, emit_event, runs_root
+    root = runs_root(args.runs)
+    reg = ExperimentRegistry(root)
+    with open(args.def_json) as f:
+        defn = json.load(f)
+    rec = reg.submit(defn)
+    emit_event(os.path.join(root, rec["experiment_id"]), rec["experiment_id"],
+               "EXPERIMENT_QUEUED", {"dataset_dir": defn["dataset_dir"]})
+    print(json.dumps({"status": "OK", "experiment": rec}, indent=2))
+    return 0
+
+
+def _cmd_auto_suggest(args) -> int:
+    import yaml
+    from .orchestrate import ExperimentRegistry, experiment_id, runs_root
+    policy = {}
+    for cand in ("config/ai-policy.v1.yaml", "../config/ai-policy.v1.yaml"):
+        if os.path.exists(cand):
+            with open(cand) as f:
+                policy = yaml.safe_load(f) or {}
+            break
+    auto = policy.get("automation", {})
+    budget = int(args.budget or auto.get("max_experiments_per_cycle", 3))
+    base = json.load(open(args.base_json)) if args.base_json else {}
+    seeds = [7, 11, 13, 17, 23][:budget]
+    reg = ExperimentRegistry(runs_root(args.runs))
+    out = []
+    for seed in seeds:
+        d = dict(base)
+        d.setdefault("model_type", "sgd-logloss")
+        d.setdefault("hyperparameters", {"alpha": 0.0001, "random_state": seed})
+        d["seed"] = seed
+        d.setdefault("epochs", int(auto.get("default_epochs", 5)))
+        d.setdefault("device", "cpu")
+        eid = experiment_id(d)
+        if eid not in reg.exps:
+            d["_experiment_id"] = eid
+            out.append(d)
+    if args.llm_json:
+        proposal = json.load(open(args.llm_json))
+        from .orchestrate import validate_definition
+        validate_definition(proposal)  # structured + validated before execution
+        proposal["_experiment_id"] = experiment_id(proposal)
+        proposal["_source"] = "llm-proposal"
+        out.append(proposal)
+    print(json.dumps({"status": "OK", "suggestions": out}, indent=2))
+    return 0
+
+
+def _node_backtest_runner(bars_path: str, exp_dir: str) -> dict:
+    import subprocess as _sp
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    script = os.path.join(repo, "scripts", "backtest-gate.mjs")
+    hooks = os.path.join(repo, "scripts", "aurix-register.mjs")
+    try:
+        r = _sp.run(["node", "--import", hooks, script, bars_path],
+                    capture_output=True, text=True, timeout=300, cwd=repo)
+        last = [l for l in r.stdout.strip().split("\n") if l.strip()][-1]
+        return json.loads(last)
+    except Exception as e:
+        return {"ok": False, "reason": f"backtest runner failed: {e}"}
+
+
+def _load_gates() -> tuple:
+    import yaml
+    policy, auto, gates = {}, {}, {}
+    for cand in ("config/ai-policy.v1.yaml", "../config/ai-policy.v1.yaml"):
+        if os.path.exists(cand):
+            with open(cand) as f:
+                policy = yaml.safe_load(f) or {}
+            break
+    auto = policy.get("automation", {})
+    sched = {"max_concurrent_training": int(auto.get("max_concurrent_training", 1)),
+             "heartbeat_timeout_s": int(auto.get("heartbeat_timeout_s", 600))}
+    gates = {"min_oos_edge_vs_baseline": float(auto.get("min_oos_edge_vs_baseline", 0.01)),
+             "max_backtest_drawdown_pct": float(auto.get("max_backtest_drawdown_pct", 10.0))}
+    return sched, gates
+
+
+def _cmd_auto_cycle(args) -> int:
+    from .orchestrate import Scheduler, runs_root
+    sched, gates = _load_gates()
+    s = Scheduler(runs_root(args.runs), sched, backtest_runner=_node_backtest_runner)
+    print(json.dumps({"status": "OK", "cycle": s.cycle(detach=args.detach)}, indent=2, default=str))
+    return 0
+
+
+def _cmd_auto_status(args) -> int:
+    from .orchestrate import ExperimentRegistry, read_heartbeat, runs_root
+    root = runs_root(args.runs)
+    reg = ExperimentRegistry(root)
+    rows = []
+    for eid, exp in sorted(reg.exps.items()):
+        hb = read_heartbeat(os.path.join(root, eid))
+        gov_path = os.path.join(root, eid, "governance.json")
+        last_result = None
+        if os.path.exists(gov_path):
+            last_result = json.load(open(gov_path)).get("outcome")
+        elif os.path.exists(os.path.join(root, eid, "eval.json")):
+            ev = json.load(open(os.path.join(root, eid, "eval.json")))
+            last_result = f"acc={ev['accuracy']:.4f} base={ev['baseline_majority_accuracy']:.4f}"
+        stage = {"QUEUED": "awaiting worker", "RUNNING": "training",
+                 "COMPLETED": "awaiting evaluation", "EVALUATED": "awaiting governance"}.get(
+            exp["status"], exp["status"].lower())
+        rows.append({"experiment": eid, "state": exp["status"],
+                     "elapsed_ms": (exp.get("completed_at") or int(__import__('time').time() * 1000))
+                     - (exp.get("started_at") or exp["created_at"]),
+                     "epoch": (hb or {}).get("epoch"),
+                     "checkpoint": (hb or {}).get("checkpoint"),
+                     "worker_pid": (hb or {}).get("pid"),
+                     "next": stage, "last_result": last_result})
+    print(json.dumps({"status": "OK", "runs_root": root, "experiments": rows}, indent=2))
+    return 0
+
+
+def _cmd_auto_start(args) -> int:
+    import subprocess as _sp
+    svc = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.abspath(args.runs or os.path.join(svc, "..", "..", "data", "runs"))
+    os.makedirs(root, exist_ok=True)
+    log = open(os.path.join(root, "supervisor.log"), "ab")
+    flags = 0
+    if os.name == "nt":
+        flags = 0x00000008 | 0x00000200
+    p = _sp.Popen([sys.executable, "-m", "aurix_ai.cli", "auto-supervise",
+                   "--runs", root, "--interval", str(args.interval)],
+                  cwd=os.path.join(svc, ".."), stdout=log, stderr=_sp.STDOUT,
+                  stdin=_sp.DEVNULL, start_new_session=(os.name != "nt"),
+                  creationflags=flags)
+    with open(os.path.join(root, "supervisor.pid"), "w") as f:
+        f.write(str(p.pid))
+    print(json.dumps({"status": "OK", "supervisor_pid": p.pid, "runs_root": root,
+                      "note": "detached local supervisor (not a Windows service)"}))
+    return 0
+
+
+def _cmd_auto_supervise(args) -> int:
+    import time as _time
+    from .orchestrate import Scheduler, runs_root
+    sched, gates = _load_gates()
+    s = Scheduler(runs_root(args.runs), sched, backtest_runner=_node_backtest_runner)
+    while True:
+        try:
+            s.cycle(detach=True)
+        except Exception as e:
+            with open(os.path.join(s.root, "supervisor-errors.log"), "a") as f:
+                f.write(json.dumps({"at": int(_time.time() * 1000), "error": str(e)}) + "\n")
+        _time.sleep(max(10, int(args.interval)))
+
+
+def _cmd_auto_worker(args) -> int:
+    from .worker import run_worker
+    raise SystemExit(run_worker(args.exp_dir, resume=args.resume))
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aurix-train")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -281,6 +437,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--out", required=True); s.add_argument("--id", default="aurix-nse-daily")
     s.add_argument("--horizon", type=int, default=5); s.add_argument("--threshold", type=float, default=0.005)
     s.add_argument("--cross-check", action="store_true"); s.set_defaults(fn=_cmd_history_build)
+    s = sub.add_parser("auto-submit"); s.add_argument("--def-json", required=True, dest="def_json"); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_auto_submit)
+    s = sub.add_parser("auto-suggest"); s.add_argument("--base-json", default=None); s.add_argument("--budget", type=int, default=None); s.add_argument("--llm-json", default=None); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_auto_suggest)
+    s = sub.add_parser("auto-cycle"); s.add_argument("--runs", default=None); s.add_argument("--detach", action="store_true"); s.set_defaults(fn=_cmd_auto_cycle)
+    s = sub.add_parser("auto-status"); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_auto_status)
+    s = sub.add_parser("auto-start"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_start)
+    s = sub.add_parser("auto-supervise"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_supervise)
+    s = sub.add_parser("auto-worker"); s.add_argument("--exp-dir", required=True); s.add_argument("--resume", action="store_true"); s.set_defaults(fn=_cmd_auto_worker)
     return p
 
 

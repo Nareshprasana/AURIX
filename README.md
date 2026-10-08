@@ -111,6 +111,11 @@ Phase proof scripts: `pnpm verify:cumulative|strategy|portfolio|execution`
 - Training usage: emitted datasets load via the existing `train`/`evaluate` commands (compat run verified).
 - Backtesting usage: `node --import ./scripts/aurix-register.mjs scripts/verify-history-data.mjs <dataset-version>` runs real bars through `buildDataset` + `runBacktest` (integrity proof, not a profitability claim).
 
+## Automated Training
+
+- Hands-free experiment lifecycle: `auto-submit` → `auto-cycle` (or detached `auto-start` supervisor) → `auto-status`. See `docs/training/automation.md`.
+- One heavy job at a time; workers are independent processes with checkpoint resume; governance promotes to VALIDATED only (accuracy edge + backtest gate), never beyond — PAPER+ stays operator-only.
+
 ## Resource usage
 
 Designed for the available box (4 GB GPU, CPU fallback everywhere): lightweight

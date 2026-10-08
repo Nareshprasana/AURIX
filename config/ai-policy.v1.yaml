@@ -52,3 +52,14 @@ registry:
     - [VALIDATED, PAPER]
     - [PAPER, APPROVED]
     - [APPROVED, ACTIVE]
+
+automation:
+  # Orchestrator policy: single heavy job, small bounded experiment budget.
+  max_experiments_per_cycle: 3
+  max_concurrent_training: 1
+  default_epochs: 5
+  heartbeat_timeout_s: 600
+  # Governance gates (deterministic; accuracy != profitability, backtest required).
+  min_oos_edge_vs_baseline: 0.01
+  max_backtest_drawdown_pct: 10.0
+  require_backtest_completed: true
