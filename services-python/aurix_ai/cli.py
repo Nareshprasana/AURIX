@@ -310,8 +310,10 @@ def _node_backtest_runner(bars_path: str, exp_dir: str) -> dict:
     try:
         r = _sp.run(["node", "--import", hooks, script, bars_path],
                     capture_output=True, text=True, timeout=300, cwd=repo)
-        last = [l for l in r.stdout.strip().split("\n") if l.strip()][-1]
-        return json.loads(last)
+        lines = [l for l in r.stdout.strip().split("\n") if l.strip()]
+        if not lines:
+            raise RuntimeError(f"empty stdout (rc={r.returncode}): {r.stderr.strip()[-500:]}")
+        return json.loads(lines[-1])
     except Exception as e:
         return {"ok": False, "reason": f"backtest runner failed: {e}"}
 
@@ -361,21 +363,113 @@ def _cmd_auto_status(args) -> int:
                      "elapsed_ms": (exp.get("completed_at") or int(__import__('time').time() * 1000))
                      - (exp.get("started_at") or exp["created_at"]),
                      "epoch": (hb or {}).get("epoch"),
+                     "total_epochs": exp["definition"].get("epochs"),
                      "checkpoint": (hb or {}).get("checkpoint"),
                      "worker_pid": (hb or {}).get("pid"),
                      "next": stage, "last_result": last_result})
+    if args.concise:
+        running = [r for r in rows if r["state"] == "RUNNING"]
+        stopped = [r for r in rows if r["state"] == "STOPPED"]
+        if running:
+            r = running[0]
+            total = r["total_epochs"] or "?"
+            print(f"Training: RUNNING\nExperiment: {r['experiment']}\n"
+                  f"Worker: {r['worker_pid']}\nEpoch: {r['epoch']}/{total}\n"
+                  f"Checkpoint: {r['checkpoint']}\nElapsed: {_fmt_ms(r['elapsed_ms'])}\n"
+                  f"Next stage: {r['next']}")
+        elif stopped:
+            r = stopped[0]
+            print(f"Training: STOPPED\nExperiment: {r['experiment']}\n"
+                  f"Checkpoint: {r['checkpoint']}\nNext stage: resume on next start")
+        else:
+            print("Training: IDLE\nNo active AURIX training job.")
+        return 0
     print(json.dumps({"status": "OK", "runs_root": root, "experiments": rows}, indent=2))
+    return 0
+
+
+def _fmt_ms(ms: int | None) -> str:
+    if ms is None:
+        return "?"
+    s = max(0, int(ms) // 1000)
+    if s < 60:
+        return f"{s}s"
+    return f"{s // 60}m {s % 60}s"
+
+
+def _cmd_auto_stop(args) -> int:
+    """Graceful stop: halt supervisor at once (no new work), then wait for
+    each RUNNING worker to exit naturally so its per-epoch checkpoints stay
+    valid. Marks STOPPED + persists the event. Never deletes anything, never
+    kills blindly, never touches unrelated processes."""
+    import signal as _signal
+    import time as _time
+    from .orchestrate import (ExperimentRegistry, emit_event, pid_alive,
+                              read_heartbeat, request_stop, runs_root)
+    root = runs_root(args.runs)
+    request_stop(root)  # scheduler cycles become no-ops immediately
+    summary: dict = {"supervisor": "absent", "stopped": [], "pending": []}
+    pidfile = os.path.join(root, "supervisor.pid")
+    if os.path.exists(pidfile):
+        try:
+            pid = int(open(pidfile).read().strip())
+        except (ValueError, OSError):
+            pid = None
+        if pid and pid != os.getpid() and pid_alive(pid):
+            try:
+                os.kill(pid, _signal.SIGTERM)
+            except Exception:
+                pass
+            for _ in range(30):  # ~15 s grace for the supervisor loop to exit
+                if not pid_alive(pid):
+                    break
+                _time.sleep(0.5)
+            summary["supervisor"] = "stopped" if not pid_alive(pid) else "still-running"
+        elif pid and pid == os.getpid():
+            summary["supervisor"] = "refused-self"
+    reg = ExperimentRegistry(root)
+    if not reg.running():
+        print(json.dumps({"status": "OK", **summary, "message": "No active AURIX training job."},
+                         indent=2))
+        return 0
+    timeout = max(5, int(args.timeout))
+    for exp in reg.running():
+        eid = exp["experiment_id"]
+        edir = os.path.join(root, eid)
+        done = False
+        deadline = _time.time() + timeout
+        while _time.time() < deadline:
+            hb = read_heartbeat(edir)
+            manifest_done = os.path.exists(os.path.join(edir, "manifest.json"))
+            finished = hb is not None and (hb.get("status") == "done" or
+                                           not pid_alive(int(hb.get("pid") or -1)))
+            if finished and (manifest_done or hb.get("status") == "done"):
+                done = True
+                break
+            _time.sleep(2)
+        if done:
+            hb = read_heartbeat(edir) or {}
+            reg.transition(eid, "STOPPED", "graceful user stop; checkpoints preserved")
+            emit_event(edir, eid, "TRAINING_STOPPED",
+                       {"epoch": hb.get("epoch"), "checkpoint": hb.get("checkpoint")})
+            summary["stopped"].append(eid)
+        else:
+            emit_event(edir, eid, "TRAINING_STOPPED",
+                       {"pending": True, "reason": "worker still running at timeout; no kill, no state change"})
+            summary["pending"].append(eid)
+    print(json.dumps({"status": "OK", **summary}, indent=2))
     return 0
 
 
 def _spawn_supervisor(root: str, interval: int) -> int:
     import subprocess as _sp
+    from .orchestrate import windows_hidden_flags
     svc = os.path.dirname(os.path.abspath(__file__))
     os.makedirs(root, exist_ok=True)
     log = open(os.path.join(root, "supervisor.log"), "ab")
     flags = 0
     if os.name == "nt":
-        flags = 0x00000008 | 0x00000200
+        flags = 0x00000008 | 0x00000200 | windows_hidden_flags()
     p = _sp.Popen([sys.executable, "-m", "aurix_ai.cli", "auto-supervise",
                    "--runs", root, "--interval", str(interval)],
                   cwd=os.path.join(svc, ".."), stdout=log, stderr=_sp.STDOUT,
@@ -386,13 +480,29 @@ def _spawn_supervisor(root: str, interval: int) -> int:
     return p.pid
 
 
+def _ensure_supervisor(root: str, interval: int) -> tuple:
+    """Start the supervisor unless one is already alive. Returns (pid, fresh)."""
+    from .orchestrate import pid_alive
+    os.makedirs(root, exist_ok=True)
+    pidfile = os.path.join(root, "supervisor.pid")
+    if os.path.exists(pidfile):
+        try:
+            old = int(open(pidfile).read().strip())
+        except (ValueError, OSError):
+            old = None
+        if old and pid_alive(old):
+            return old, False
+    return _spawn_supervisor(root, interval), True
+
+
 def _cmd_auto_start(args) -> int:
     from .orchestrate import runs_root
     svc = os.path.dirname(os.path.abspath(__file__))
     root = os.path.abspath(args.runs or os.path.join(svc, "..", "..", "data", "runs"))
-    pid = _spawn_supervisor(root, args.interval)
+    pid, fresh = _ensure_supervisor(root, args.interval)
     print(json.dumps({"status": "OK", "supervisor_pid": pid, "runs_root": root,
-                      "note": "detached local supervisor (not a Windows service)"}))
+                      "note": "detached local supervisor (not a Windows service)" if fresh
+                      else "supervisor already running; refusing duplicate"}))
     return 0
 
 
@@ -446,6 +556,8 @@ def _cmd_auto_train(args) -> int:
     auto = policy.get("automation", {})
     ml = policy.get("market_ml", {})
     root = runs_root(args.runs)
+    from .orchestrate import clear_stop
+    clear_stop(root)  # explicit user start: lift any prior stop request
     reg = ExperimentRegistry(root)
     active = [e for e in reg.exps.values() if e["status"] in ("QUEUED", "RUNNING")]
     submitted = []
@@ -477,15 +589,18 @@ def _cmd_auto_train(args) -> int:
     if args.once:
         sched, gates = _load_gates()
         s = Scheduler(root, sched, backtest_runner=_node_backtest_runner)
+        revived = s.revive_stopped(detach=True)
         cycle = s.cycle(detach=True)
+        cycle["revived"] = revived
         print(json.dumps({"status": "OK", "mode": "once", "runs_root": root,
                           "submitted": submitted, "cycle": cycle,
                           "next": "workers continue independently; use auto-status"},
                          indent=2, default=str))
         return 0
-    pid = _spawn_supervisor(os.path.abspath(root), args.interval)
+    pid, fresh = _ensure_supervisor(os.path.abspath(root), args.interval)
     print(json.dumps({"status": "OK", "mode": "supervised", "runs_root": root,
                       "submitted": submitted, "supervisor_pid": pid,
+                      "supervisor": "reused" if not fresh else "started",
                       "message": "automated training started; workers continue independently"},
                      indent=2))
     return 0
@@ -493,10 +608,13 @@ def _cmd_auto_train(args) -> int:
 
 def _cmd_auto_supervise(args) -> int:
     import time as _time
-    from .orchestrate import Scheduler, runs_root
+    from .orchestrate import Scheduler, runs_root, stop_requested
     sched, gates = _load_gates()
-    s = Scheduler(runs_root(args.runs), sched, backtest_runner=_node_backtest_runner)
+    root = runs_root(args.runs)
+    s = Scheduler(root, sched, backtest_runner=_node_backtest_runner)
     while True:
+        if stop_requested(root):
+            break  # graceful supervisor exit: no new work after a stop
         try:
             s.cycle(detach=True)
         except Exception as e:
@@ -542,7 +660,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("auto-submit"); s.add_argument("--def-json", required=True, dest="def_json"); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_auto_submit)
     s = sub.add_parser("auto-suggest"); s.add_argument("--base-json", default=None); s.add_argument("--budget", type=int, default=None); s.add_argument("--llm-json", default=None); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_auto_suggest)
     s = sub.add_parser("auto-cycle"); s.add_argument("--runs", default=None); s.add_argument("--detach", action="store_true"); s.set_defaults(fn=_cmd_auto_cycle)
-    s = sub.add_parser("auto-status"); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_auto_status)
+    s = sub.add_parser("auto-status"); s.add_argument("--runs", default=None); s.add_argument("--concise", action="store_true"); s.set_defaults(fn=_cmd_auto_status)
+    s = sub.add_parser("auto-stop"); s.add_argument("--runs", default=None); s.add_argument("--timeout", type=int, default=300); s.set_defaults(fn=_cmd_auto_stop)
     s = sub.add_parser("auto-start"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_start)
     s = sub.add_parser("auto-supervise"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_supervise)
     s = sub.add_parser("auto-worker"); s.add_argument("--exp-dir", required=True); s.add_argument("--resume", action="store_true"); s.set_defaults(fn=_cmd_auto_worker)

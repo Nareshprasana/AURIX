@@ -24,7 +24,7 @@ import time
 from . import __version__ as CODE_VERSION
 from .errors import fail
 
-STATES = ("QUEUED", "RUNNING", "CHECKPOINTED", "COMPLETED", "EVALUATED",
+STATES = ("QUEUED", "RUNNING", "STOPPED", "CHECKPOINTED", "COMPLETED", "EVALUATED",
           "BACKTESTED", "FAILED", "CANCELLED", "REJECTED", "VALIDATED", "PROMOTED")
 TERMINAL = ("FAILED", "CANCELLED", "REJECTED", "VALIDATED", "PROMOTED")
 
@@ -215,6 +215,29 @@ def latest_checkpoint(exp_dir: str) -> str | None:
     return ckpts[-1] if ckpts else None
 
 
+def windows_hidden_flags() -> int:
+    """CREATE_NO_WINDOW so supervised/worker processes never open a visible
+    console; combined with detach flags elsewhere for independence."""
+    return 0x08000000 if os.name == "nt" else 0
+
+
+def stop_requested(root: str) -> bool:
+    return os.path.exists(os.path.join(root, "stop.requested"))
+
+
+def request_stop(root: str) -> None:
+    os.makedirs(root, exist_ok=True)
+    with open(os.path.join(root, "stop.requested"), "w") as f:
+        f.write(str(utc_ms()))
+
+
+def clear_stop(root: str) -> None:
+    try:
+        os.remove(os.path.join(root, "stop.requested"))
+    except OSError:
+        pass
+
+
 def default_launcher(exp_dir: str, resume: bool, detach: bool = False) -> subprocess.Popen:
     """Spawn the worker as an independent process (existing CLI, existing code)."""
     cmd = [sys.executable, "-m", "aurix_ai.cli", "auto-worker",
@@ -222,7 +245,7 @@ def default_launcher(exp_dir: str, resume: bool, detach: bool = False) -> subpro
     svc_dir = os.path.join(repo_root(), "services-python")
     flags = 0
     if detach and os.name == "nt":
-        flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        flags = 0x00000008 | 0x00000200 | windows_hidden_flags()  # detached, own group, no window
     return subprocess.Popen(cmd, cwd=svc_dir, stdout=open(os.path.join(exp_dir, "worker.log"), "ab"),
                             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                             start_new_session=(os.name != "nt"), creationflags=flags)
@@ -395,8 +418,38 @@ class Scheduler:
         return done
 
     def cycle(self, detach: bool = False, gates: dict | None = None) -> dict:
+        if stop_requested(self.root):
+            return {"started": [], "reaped": [], "evaluated": [], "governed": [],
+                    "stopped": True}
         out = {"started": self.start_eligible(detach=detach),
                "reaped": self.reap(detach=detach),
                "evaluated": self.evaluate_eligible(),
                "governed": self.govern_eligible(gates or {})}
         return out
+
+    def revive_stopped(self, detach: bool = False) -> list:
+        """Explicit user restart (`aurix train`): STOPPED exps resume safely.
+        Manifest-complete ones rejoin the lifecycle; others relaunch workers
+        from their preserved checkpoints. Never duplicates, never overwrites."""
+        revived = []
+        for exp in list(self.reg.exps.values()):
+            if exp["status"] != "STOPPED":
+                continue
+            if len(self.reg.running()) >= self.max_concurrent:
+                break
+            eid = exp["experiment_id"]
+            edir = self._exp_dir(eid)
+            hb = read_heartbeat(edir)
+            manifest_done = os.path.exists(os.path.join(edir, "manifest.json"))
+            if manifest_done and hb and hb.get("status") == "done":
+                self.reg.transition(eid, "COMPLETED", "revived after stop; work was complete")
+                emit_event(edir, eid, "TRAINING_COMPLETED",
+                           {"epochs": hb.get("epoch", 0), "note": "completed before stop"})
+                revived.append((eid, "completed"))
+            else:
+                self.reg.transition(eid, "RUNNING", "revived after stop; resuming from checkpoint")
+                emit_event(edir, eid, "TRAINING_RESUMED",
+                           {"from": (hb or {}).get("checkpoint"), "reason": "user restart"})
+                self.launcher(edir, True, detach)
+                revived.append((eid, "resumed"))
+        return revived

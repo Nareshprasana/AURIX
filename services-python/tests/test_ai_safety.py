@@ -50,7 +50,10 @@ def test_no_recursive_delete_of_data_roots_in_code():
     assert hits == []
     for mod in ("orchestrate.py", "worker.py"):
         src = open(os.path.join(root, mod)).read()
-        assert "os.remove(" not in src, mod
+        # Single exception: the stop.requested control flag (not data).
+        for i, line in enumerate(src.split("\n")):
+            if "os.remove(" in line:
+                assert "stop.requested" in line, f"{mod}:{i + 1}"
         assert "unlink(" not in src, mod
         assert "rmtree" not in src, mod
     scripts = os.path.join(REPO, "scripts")

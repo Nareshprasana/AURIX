@@ -15,7 +15,30 @@ supervisor, prints a status line, and returns — workers continue independently
 The supervisor loop (`auto-supervise`) runs `auto-cycle` repeatedly:
 queue → train → evaluate → backtest → govern.
 
-## Status / manual inspection (optional)
+## Status / stop
+
+```cmd
+AURIX> aurix train status
+AURIX> aurix train stop
+```
+
+`status` prints a concise block (`Training: RUNNING/STOPPED/IDLE`,
+experiment, worker pid, epoch x/y, checkpoint, elapsed, next stage) or
+`IDLE` with `No active AURIX training job.` `stop` halts the supervisor at
+once (no new work), waits for RUNNING workers to exit naturally so their
+per-epoch checkpoints stay valid, marks experiments `STOPPED`, and persists
+the stop event. Nothing is deleted; no unrelated process is touched. A later
+`aurix train` resumes STOPPED experiments from preserved checkpoints.
+Starting twice is safe: a repeat start reuses the live supervisor instead of
+spawning a duplicate.
+
+## Background execution (no extra windows)
+
+Supervisor and workers run as hidden background processes
+(`DETACHED_PROCESS` + own process group + `CREATE_NO_WINDOW`): one CMD window
+stays open, nothing else pops up, and independence is preserved.
+
+## Manual inspection (optional)
 
 From `services-python/` with `../.venv` python, `auto-status` shows state,
 elapsed time, epoch, checkpoint, worker pid, next stage, and last result.
