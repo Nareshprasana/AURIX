@@ -8,6 +8,13 @@ dependencies = ["numpy>=1.24", "scikit-learn>=1.3", "joblib>=1.3", "pyyaml>=6"]
 [project.scripts]
 aurix-train = "aurix_ai.cli:main"
 
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["aurix_ai*", "aurix_py*"]
+
 [dependency-groups]
 dev = ["pytest>=8"]
 
