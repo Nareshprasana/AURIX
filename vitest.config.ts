@@ -18,7 +18,9 @@ const alias = {
   '@aurix/broker-sim': `${root}apps/brokers/broker-sim/src/index.ts`,
   '@aurix/broker-kite': `${root}apps/brokers/broker-kite/src/index.ts`,
   '@aurix/system-health': `${root}apps/system-health/src/index.ts`,
-  '@aurix/knowledge-service': `${root}apps/knowledge-service/src/index.ts`
+  '@aurix/knowledge-service': `${root}apps/knowledge-service/src/index.ts`,
+  '@aurix/sync-protocol': `${root}packages/sync-protocol/src/index.ts`,
+  '@aurix/sync-manager': `${root}apps/sync-manager/src/index.ts`
 };
 
 export default defineConfig({

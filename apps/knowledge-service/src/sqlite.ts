@@ -48,6 +48,16 @@ function keyOf(table: string): string {
   return 'id';
 }
 
+const SYNC_SNAPSHOT_TABLES = [
+  'proposals', 'nodes', 'node_versions', 'edges', 'provenance',
+  'knowledge_events', 'memories', 'embeddings', 'versions', 'fact_claims'
+];
+
+export interface TableSnapshot {
+  table: string;
+  rows: Row[];
+}
+
 export class SqliteTables implements KnowledgeTables {
   constructor(private db: DatabaseSync) {}
 
@@ -79,6 +89,19 @@ export class SqliteTables implements KnowledgeTables {
     if (cols.length === 0) return;
     const info = this.db.prepare(`UPDATE ${table} SET ${cols.map((c) => `${c}=?`).join(',')} WHERE ${keyOf(table)}=?`).run(...([...cols.map((c) => patch[c]), id] as SQLInputValue[])) as { changes: number | bigint };
     if (Number(info.changes) === 0) throw new Error(`missing key ${id} in ${table}`);
+  }
+
+  /** Full-table snapshot for merge checkpoints; restore() replays it back verbatim. */
+  snapshot(): TableSnapshot[] {
+    return SYNC_SNAPSHOT_TABLES.map((table) => ({ table, rows: this.query(table) }));
+  }
+
+  restore(snap: TableSnapshot[]): void {
+    for (const { table, rows } of snap) {
+      if (!SYNC_SNAPSHOT_TABLES.includes(table)) throw new Error(`sqlite: refuse to restore unknown table ${table}`);
+      this.db.prepare(`DELETE FROM ${table}`).run();
+      for (const r of rows) this.insert(table, { ...r });
+    }
   }
 }
 

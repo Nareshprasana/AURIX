@@ -6,7 +6,24 @@
     "types": ["node"],
     "paths": {
       "@aurix/contracts": ["./packages/contracts/src/index.ts"],
-      "@aurix/config-loader": ["./packages/config-loader/src/index.ts"]
+      "@aurix/config-loader": ["./packages/config-loader/src/index.ts"],
+      "@aurix/event-bus": ["./packages/event-bus/src/index.ts"],
+      "@aurix/observability": ["./packages/observability/src/index.ts"],
+      "@aurix/risk-engine": ["./packages/risk-engine/src/index.ts"],
+      "@aurix/order-safety-gate": ["./packages/order-safety-gate/src/index.ts"],
+      "@aurix/portfolio-engine": ["./packages/portfolio-engine/src/index.ts"],
+      "@aurix/execution-interface": ["./packages/execution-interface/src/index.ts"],
+      "@aurix/db-bootstrap": ["./packages/db-bootstrap/src/index.ts"],
+      "@aurix/model-gateway-client": ["./packages/model-gateway-client/src/index.ts"],
+      "@aurix/model-gateway": ["./apps/model-gateway/src/index.ts"],
+      "@aurix/orchestrator": ["./apps/orchestrator/src/index.ts"],
+      "@aurix/execution-service": ["./apps/execution-service/src/index.ts"],
+      "@aurix/broker-sim": ["./apps/brokers/broker-sim/src/index.ts"],
+      "@aurix/broker-kite": ["./apps/brokers/broker-kite/src/index.ts"],
+      "@aurix/system-health": ["./apps/system-health/src/index.ts"],
+      "@aurix/knowledge-service": ["./apps/knowledge-service/src/index.ts"],
+      "@aurix/sync-protocol": ["./packages/sync-protocol/src/index.ts"],
+      "@aurix/sync-manager": ["./apps/sync-manager/src/index.ts"]
     }
   },
   "include": ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts", "apps/brokers/*/src/**/*.ts"]

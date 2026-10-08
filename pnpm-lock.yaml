@@ -74,6 +74,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/contracts
 
+  apps/sync-manager:
+    dependencies:
+      '@aurix/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@aurix/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      '@aurix/sync-protocol':
+        specifier: workspace:*
+        version: link:../../packages/sync-protocol
+
   apps/system-health: {}
 
   packages/config-loader:
@@ -122,6 +134,8 @@ importers:
       '@aurix/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/sync-protocol: {}
 
 packages:
 

@@ -116,6 +116,34 @@ CREATE TABLE IF NOT EXISTS idempotency_keys(
   key TEXT PRIMARY KEY, order_id TEXT NOT NULL, created_at INTEGER NOT NULL);
 `;
 
+export const SYNC_DDL = `
+PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=5000;
+CREATE TABLE IF NOT EXISTS event_sync(
+  event_id TEXT PRIMARY KEY, origin_device TEXT NOT NULL, origin_seq INTEGER NOT NULL,
+  parents_json TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS sync_state(
+  key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS trusted_devices(
+  device_id TEXT PRIMARY KEY, installation_id TEXT NOT NULL,
+  ed25519_public TEXT NOT NULL, x25519_public TEXT NOT NULL,
+  added_at INTEGER NOT NULL, status TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS conflicts(
+  conflict_id TEXT PRIMARY KEY, entity_ref TEXT NOT NULL,
+  local_event_id TEXT, remote_event_ids_json TEXT NOT NULL,
+  assertion_a TEXT NOT NULL, assertion_b TEXT NOT NULL,
+  provenance_a_json TEXT NOT NULL, provenance_b_json TEXT NOT NULL,
+  device_a TEXT NOT NULL, device_b TEXT NOT NULL,
+  detected_at INTEGER NOT NULL, status TEXT NOT NULL,
+  resolution TEXT, resolved_at INTEGER, resolution_event_id TEXT);
+CREATE TABLE IF NOT EXISTS deferred_events(
+  event_id TEXT PRIMARY KEY, package_id TEXT NOT NULL, conflict_id TEXT NOT NULL,
+  event_json TEXT NOT NULL, envelope_json TEXT NOT NULL, received_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS import_log(
+  package_id TEXT NOT NULL, event_id TEXT NOT NULL, outcome TEXT NOT NULL,
+  applied_at INTEGER NOT NULL, PRIMARY KEY(package_id, event_id));
+`;
+
 export function initDb(db: { exec(sql: string): void }, ddl: string): void {
   db.exec(ddl);
 }

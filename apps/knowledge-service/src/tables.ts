@@ -67,4 +67,25 @@ export class MemoryTables implements KnowledgeTables {
     if (!cur) throw new Error(`missing key ${id} in ${table}`);
     b.set(id, { ...cur, ...patch });
   }
+
+  /** Deep snapshot for merge checkpoints (rollback restores byte-identical state). */
+  snapshot(): Map<string, Map<string, Row>> {
+    const out = new Map<string, Map<string, Row>>();
+    for (const [t, b] of this.data) {
+      const nb = new Map<string, Row>();
+      for (const [k, r] of b) nb.set(k, JSON.parse(JSON.stringify(r)) as Row);
+      out.set(t, nb);
+    }
+    return out;
+  }
+
+  restore(snap: Map<string, Map<string, Row>>): void {
+    const fresh = new Map<string, Map<string, Row>>();
+    for (const [t, b] of snap) {
+      const nb = new Map<string, Row>();
+      for (const [k, r] of b) nb.set(k, JSON.parse(JSON.stringify(r)) as Row);
+      fresh.set(t, nb);
+    }
+    this.data = fresh;
+  }
 }

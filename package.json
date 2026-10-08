@@ -11,7 +11,8 @@
     "lint": "node scripts/lint.mjs",
     "build": "tsc -p tsconfig.build.json",
     "verify:sqlite": "node scripts/verify-sqlite.mjs",
-    "verify:knowledge": "node scripts/verify-knowledge-sqlite.mjs"
+    "verify:knowledge": "node --import ./scripts/aurix-register.mjs scripts/verify-knowledge-sqlite.mjs",
+    "verify:sync": "node --import ./scripts/aurix-register.mjs scripts/verify-sync-sqlite.mjs"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

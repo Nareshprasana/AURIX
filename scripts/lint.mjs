@@ -1,9 +1,10 @@
 // Minimal import-boundary lint for the Phase 1 safety path.
 // Fails if deterministic safety packages import LLM/network/broker-secret code.
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const GUARDED = ['packages/risk-engine', 'packages/order-safety-gate', 'packages/portfolio-engine'];
 const FORBIDDEN = [/from\s+['"]node:net['"]/, /from\s+['"]undici['"]/, /\bfetch\s*\(/, /kiteconnect/i, /broker-?secret/i, /\bOllama\b/, /chat\/completions/i, /model-gateway/i, /research-agents/i];
 
@@ -41,6 +42,25 @@ for (const rel of KNOWLEDGE_FILES) {
   const text = readFileSync(p, 'utf8');
   if (/model-gateway|broker-sim|broker-kite|kiteconnect|research-agents|ml-training|from\s+['"]node:net['"]|\bfetch\s*\(/i.test(text)) {
     console.error(`LINT FAIL ${rel}: knowledge core must not import LLM/broker/training/network`);
+    failures++;
+  }
+}
+// Sync engine: transport only. No broker/execution/risk/research/training/gateway imports.
+const SYNC_FILES = ['apps/sync-manager/src/manager.ts', 'apps/sync-manager/src/transport.ts', 'apps/sync-manager/src/identity.ts', 'apps/sync-manager/src/crypto.ts'];
+for (const rel of SYNC_FILES) {
+  const p = join(ROOT, rel);
+  if (!existsSync(p)) continue;
+  const text = readFileSync(p, 'utf8');
+  if (/@aurix\/broker|@aurix\/execution|@aurix\/risk|research-agents|ml-training|model-gateway|kiteconnect|from\s+['"]node:net['"]/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: sync engine must not import broker/execution/risk/research/training/gateway`);
+    failures++;
+  }
+}
+// Transports move opaque files: no knowledge-store imports beyond the facade (none at all here).
+{
+  const text = readFileSync(join(ROOT, 'apps/sync-manager/src/transport.ts'), 'utf8');
+  if (/knowledge-service|KnowledgeStore/i.test(text)) {
+    console.error('LINT FAIL apps/sync-manager/src/transport.ts: transport must not import the knowledge store');
     failures++;
   }
 }

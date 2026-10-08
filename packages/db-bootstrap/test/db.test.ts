@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CORE_DDL, KNOWLEDGE_DDL, PORTFOLIO_DDL } from '../src/index.js';
+import { CORE_DDL, KNOWLEDGE_DDL, PORTFOLIO_DDL, SYNC_DDL } from '../src/index.js';
 
 describe('db-bootstrap', () => {
   it('core DDL covers instruments/eligibility/market-status/events/modes/promotions', () => {
@@ -29,5 +29,12 @@ describe('db-bootstrap', () => {
     for (const t of ['decisions', 'orders', 'fills', 'positions', 'risk_audits', 'safety_audits', 'idempotency_keys']) {
       expect(PORTFOLIO_DDL).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS ${t}`));
     }
+  });
+
+  it('sync DDL covers envelopes/state/trust/conflicts/deferred/import-log', () => {
+    for (const t of ['event_sync', 'sync_state', 'trusted_devices', 'conflicts', 'deferred_events', 'import_log']) {
+      expect(SYNC_DDL).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS ${t}`));
+    }
+    expect(SYNC_DDL).toMatch(/journal_mode=WAL/);
   });
 });
