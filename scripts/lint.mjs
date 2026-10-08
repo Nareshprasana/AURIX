@@ -33,6 +33,17 @@ for (const rel of EXEC_FILES) {
     failures++;
   }
 }
+// Knowledge service owns graph writes: no LLM/broker/training/network imports.
+const KNOWLEDGE_FILES = ['apps/knowledge-service/src/index.ts', 'apps/knowledge-service/src/store.ts', 'apps/knowledge-service/src/tables.ts', 'apps/knowledge-service/src/policy.ts', 'apps/knowledge-service/src/secrets.ts', 'apps/knowledge-service/src/hash.ts', 'apps/knowledge-service/src/export.ts', 'apps/knowledge-service/src/sqlite.ts'];
+for (const rel of KNOWLEDGE_FILES) {
+  const p = join(ROOT, rel);
+  if (!existsSync(p)) continue;
+  const text = readFileSync(p, 'utf8');
+  if (/model-gateway|broker-sim|broker-kite|kiteconnect|research-agents|ml-training|from\s+['"]node:net['"]|\bfetch\s*\(/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: knowledge core must not import LLM/broker/training/network`);
+    failures++;
+  }
+}
 if (failures > 0) {
   console.error(`${failures} lint violation(s)`);
   process.exit(1);

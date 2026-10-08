@@ -42,25 +42,48 @@ PRAGMA journal_mode=WAL;
 PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS nodes(
   id TEXT PRIMARY KEY, kind TEXT NOT NULL, label TEXT NOT NULL,
-  data_json TEXT NOT NULL, label_class TEXT NOT NULL,
-  created_by TEXT NOT NULL, created_at INTEGER NOT NULL, version TEXT NOT NULL);
+  data_json TEXT NOT NULL, label_class TEXT NOT NULL, version INTEGER NOT NULL,
+  status TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL,
+  event_id TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS node_versions(
+  id TEXT PRIMARY KEY, node_id TEXT NOT NULL, version INTEGER NOT NULL,
+  data_json TEXT NOT NULL, label TEXT NOT NULL, label_class TEXT NOT NULL,
+  event_id TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS edges(
   id TEXT PRIMARY KEY, src TEXT NOT NULL, dst TEXT NOT NULL, rel TEXT NOT NULL,
-  data_json TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL);
+  data_json TEXT NOT NULL, label_class TEXT NOT NULL, confidence REAL NOT NULL,
+  provenance_ref TEXT NOT NULL, version INTEGER NOT NULL, status TEXT NOT NULL,
+  valid_from INTEGER NOT NULL, valid_until INTEGER,
+  created_by TEXT NOT NULL, created_at INTEGER NOT NULL, event_id TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS proposals(
+  id TEXT PRIMARY KEY, assertion TEXT NOT NULL, ops_json TEXT NOT NULL,
+  provenance_json TEXT NOT NULL, actor TEXT NOT NULL, state TEXT NOT NULL,
+  reasons_json TEXT NOT NULL, committed_event_id TEXT, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS knowledge_events(
   id TEXT PRIMARY KEY, event_type TEXT NOT NULL, entity_ref TEXT NOT NULL,
   payload_json TEXT NOT NULL, actor TEXT NOT NULL, label_class TEXT NOT NULL,
   evidence_refs_json TEXT NOT NULL, prev_version TEXT NOT NULL,
   new_version TEXT NOT NULL, device_id TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_kevents_entity ON knowledge_events(entity_ref, created_at);
 CREATE TABLE IF NOT EXISTS provenance(
   id TEXT PRIMARY KEY, entity_ref TEXT NOT NULL, what TEXT NOT NULL,
-  when_ts INTEGER NOT NULL, source TEXT NOT NULL, agent TEXT NOT NULL,
-  evidence_refs_json TEXT NOT NULL, confidence REAL, validated INTEGER NOT NULL DEFAULT 0,
-  outcome_ref TEXT);
+  source TEXT NOT NULL, source_type TEXT NOT NULL, source_identifier TEXT NOT NULL,
+  observed_at INTEGER NOT NULL, ingested_at INTEGER NOT NULL, agent TEXT NOT NULL,
+  model TEXT, prompt_version TEXT, evidence_refs_json TEXT NOT NULL,
+  confidence REAL NOT NULL, validation_state TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS memories(
   id TEXT PRIMARY KEY, category TEXT NOT NULL, key TEXT NOT NULL,
   content_json TEXT NOT NULL, embedding_ref TEXT, regime TEXT,
-  strategy_id TEXT, created_at INTEGER NOT NULL);
+  strategy_id TEXT, label_class TEXT NOT NULL, event_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS embeddings(
+  id TEXT PRIMARY KEY, document_id TEXT NOT NULL, model TEXT NOT NULL,
+  model_version TEXT NOT NULL, dim INTEGER NOT NULL, vector_json TEXT NOT NULL,
+  metadata_json TEXT NOT NULL, source TEXT NOT NULL,
+  knowledge_version INTEGER NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS fact_claims(
+  claim_key TEXT PRIMARY KEY, entity_ref TEXT NOT NULL, content_hash TEXT NOT NULL,
+  sources_json TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS versions(
   component TEXT PRIMARY KEY, version TEXT NOT NULL,
   checksum TEXT NOT NULL, created_at INTEGER NOT NULL);

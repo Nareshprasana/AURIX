@@ -15,6 +15,16 @@ describe('db-bootstrap', () => {
     expect(KNOWLEDGE_DDL).not.toMatch(/DROP TABLE/);
   });
 
+  it('knowledge DDL covers Phase 2 versioning/proposals/memories/embeddings/claims', () => {
+    for (const t of ['nodes', 'node_versions', 'edges', 'proposals', 'provenance', 'memories', 'embeddings', 'fact_claims', 'versions']) {
+      expect(KNOWLEDGE_DDL).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS ${t}`));
+    }
+    expect(KNOWLEDGE_DDL).toMatch(/valid_from/);
+    expect(KNOWLEDGE_DDL).toMatch(/valid_until/);
+    expect(KNOWLEDGE_DDL).toMatch(/source_type/);
+    expect(KNOWLEDGE_DDL).toMatch(/idx_kevents_entity/);
+  });
+
   it('portfolio DDL has decisions/orders/fills/positions/risk+safety audits/idempotency', () => {
     for (const t of ['decisions', 'orders', 'fills', 'positions', 'risk_audits', 'safety_audits', 'idempotency_keys']) {
       expect(PORTFOLIO_DDL).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS ${t}`));

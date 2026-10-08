@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "types": ["node"],
+    "paths": {
+      "@aurix/contracts": ["./packages/contracts/src/index.ts"],
+      "@aurix/config-loader": ["./packages/config-loader/src/index.ts"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts", "apps/brokers/*/src/**/*.ts"]
+}

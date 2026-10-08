@@ -1,5 +1,9 @@
-// @aurix/knowledge-service — Phase 1: knowledge_events append/validate stub.
-// Append-only: no update/delete API exists by design (Amendment 4).
+// @aurix/knowledge-service — deterministic knowledge platform (Phase 2).
+// Append-only events; the service owns all writes; agents submit proposals.
+// Phase 1 helpers (validateKnowledgeEvent/appendKnowledgeEvent) retained for
+// regression compatibility. NOTE: sqlite.ts is intentionally NOT re-exported
+// here (vitest cannot load node:sqlite); it is wired by production code and
+// proven via scripts/verify-knowledge-sqlite.mjs.
 import type { KnowledgeEvent, KnowledgeLabel } from '@aurix/contracts';
 
 const VALID_LABELS: KnowledgeLabel[] = ['FACT', 'OBSERVATION', 'INFERENCE', 'HYPOTHESIS', 'PREDICTION', 'UNKNOWN'];
@@ -27,3 +31,11 @@ export function appendKnowledgeEvent(e: KnowledgeEvent, exists: (id: string) => 
   insert(e);
   return e;
 }
+
+export { KnowledgeStore, KnowledgeError, SCHEMA_VERSION } from './store.js';
+export { MemoryTables, KnowledgeConflictError, TABLES } from './tables.js';
+export type { KnowledgeTables, Row } from './tables.js';
+export { stableStringify, cyrb53hex } from './hash.js';
+export { containsSecretPayload, isSecretString } from './secrets.js';
+export { AUTHORITATIVE_SOURCES, MIN_INDEPENDENT_SOURCES, isAuthoritative, downgradeForLlm, canPromoteToFact } from './policy.js';
+export { buildExport, verifyExport, sha256Hex } from './export.js';
