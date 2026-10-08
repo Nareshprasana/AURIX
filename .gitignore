@@ -35,6 +35,7 @@ data/knowledge-exports/
 node_modules/
 dist/
 build/
+.venv/
 .coverage/
 __pycache__/
 *.pyc
