@@ -113,8 +113,11 @@ Phase proof scripts: `pnpm verify:cumulative|strategy|portfolio|execution`
 
 ## Automated Training
 
-- Hands-free experiment lifecycle: `auto-submit` → `auto-cycle` (or detached `auto-start` supervisor) → `auto-status`. See `docs/training/automation.md`.
+- Start: `aurix train` from the repo root — no arguments needed. It submits
+  default experiments (if none active), starts the detached supervisor, and
+  returns while workers continue independently. Details: `docs/training/automation.md`.
 - One heavy job at a time; workers are independent processes with checkpoint resume; governance promotes to VALIDATED only (accuracy edge + backtest gate), never beyond — PAPER+ stays operator-only.
+- Existing run directories are immutable: nothing may delete/overwrite/reuse them; test cleanup uses isolated temp roots only.
 
 ## Resource usage
 

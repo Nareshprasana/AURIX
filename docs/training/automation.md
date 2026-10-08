@@ -3,19 +3,34 @@
 Local-first experiment automation over the existing `run_training()` engine.
 No new training framework, no services, no parallelism (max 1 heavy job).
 
-## Start / status
+## Start
 
-From `services-python/` with `../.venv` python:
-
-```powershell
-../.venv/Scripts/python -c "from aurix_ai.cli import main; main(['auto-submit','--def-json','<exp.json>'])"
-../.venv/Scripts/python -c "from aurix_ai.cli import main; main(['auto-cycle'])"   # queue→train→evaluate→govern
-../.venv/Scripts/python -c "from aurix_ai.cli import main; main(['auto-status'])"
+```cmd
+AURIX> aurix train
 ```
 
-Hands-free mode: `auto-start` spawns a detached local supervisor loop
-(`auto-supervise --interval 30`, pid file `data/runs/supervisor.pid`).
-This is a plain detached process, NOT a Windows service.
+That is the only command needed. It requires no dataset/run/epoch arguments:
+it submits default experiments (if none active), starts the detached
+supervisor, prints a status line, and returns — workers continue independently.
+The supervisor loop (`auto-supervise`) runs `auto-cycle` repeatedly:
+queue → train → evaluate → backtest → govern.
+
+## Status / manual inspection (optional)
+
+From `services-python/` with `../.venv` python, `auto-status` shows state,
+elapsed time, epoch, checkpoint, worker pid, next stage, and last result.
+Nobody needs to hand-run train/evaluate/resume/backtest.
+
+## Protection of existing runs
+
+Run directories are immutable historical state: the scheduler never deletes,
+overwrites, truncates, reuses, or cleans them (regression-tested, including a
+static scan for recursive-delete patterns). Test/verification cleanup is only
+ever allowed inside an isolated temporary root created by the current test
+(`assert_safe_cleanup` enforces this; production `data/runs`, `data/datasets`,
+`data/processed` always raise). Prior incident (accidental `data/runs`
+deletion during manual verification) is documented here so it is not repeated:
+never run recursive deletes against the training roots.
 
 Experiment definition JSON: `{dataset_dir, dataset_version?, model_type,
 hyperparameters, seed, epochs, device?, backtest_bars?, parent_experiment?}`.

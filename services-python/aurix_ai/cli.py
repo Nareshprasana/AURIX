@@ -368,24 +368,126 @@ def _cmd_auto_status(args) -> int:
     return 0
 
 
-def _cmd_auto_start(args) -> int:
+def _spawn_supervisor(root: str, interval: int) -> int:
     import subprocess as _sp
     svc = os.path.dirname(os.path.abspath(__file__))
-    root = os.path.abspath(args.runs or os.path.join(svc, "..", "..", "data", "runs"))
     os.makedirs(root, exist_ok=True)
     log = open(os.path.join(root, "supervisor.log"), "ab")
     flags = 0
     if os.name == "nt":
         flags = 0x00000008 | 0x00000200
     p = _sp.Popen([sys.executable, "-m", "aurix_ai.cli", "auto-supervise",
-                   "--runs", root, "--interval", str(args.interval)],
+                   "--runs", root, "--interval", str(interval)],
                   cwd=os.path.join(svc, ".."), stdout=log, stderr=_sp.STDOUT,
                   stdin=_sp.DEVNULL, start_new_session=(os.name != "nt"),
                   creationflags=flags)
     with open(os.path.join(root, "supervisor.pid"), "w") as f:
         f.write(str(p.pid))
-    print(json.dumps({"status": "OK", "supervisor_pid": p.pid, "runs_root": root,
+    return p.pid
+
+
+def _cmd_auto_start(args) -> int:
+    from .orchestrate import runs_root
+    svc = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.abspath(args.runs or os.path.join(svc, "..", "..", "data", "runs"))
+    pid = _spawn_supervisor(root, args.interval)
+    print(json.dumps({"status": "OK", "supervisor_pid": pid, "runs_root": root,
                       "note": "detached local supervisor (not a Windows service)"}))
+    return 0
+
+
+def _discover_default_dataset(datasets_root: str | None) -> tuple:
+    """Pick the newest valid versioned dataset. Fail closed when none exists."""
+    import yaml
+    from .datasets import load_dataset
+    from .orchestrate import repo_root
+    policy = {}
+    for cand in ("config/ai-policy.v1.yaml", "../config/ai-policy.v1.yaml"):
+        if os.path.exists(cand):
+            with open(cand) as f:
+                policy = yaml.safe_load(f) or {}
+            break
+    droots = [datasets_root] if datasets_root else []
+    droots.append((policy.get("automation", {}) or {}).get("default_dataset_dir"))
+    droots.append(os.path.join(repo_root(), "data", "datasets"))
+    candidates = []
+    for droot in droots:
+        if not droot or not os.path.isdir(droot):
+            continue
+        for name in sorted(os.listdir(droot)):
+            ddir = os.path.join(droot, name)
+            if os.path.isdir(ddir) and os.path.exists(os.path.join(ddir, "manifest.json")):
+                candidates.append(ddir)
+        if candidates:
+            break
+    last_error = "no versioned dataset found"
+    for ddir in sorted(candidates):
+        try:
+            _X, _y, _ts, _inst, manifest = load_dataset(ddir)
+            return ddir, manifest
+        except Exception as e:
+            last_error = f"{ddir}: {e}"
+    from .errors import fail
+    raise fail("DATASET_MISSING", last_error)
+
+
+def _cmd_auto_train(args) -> int:
+    """Single user-facing entry (`aurix train`). Takes no dataset/run/epoch
+    args: ensures default experiments exist, then hands off to a detached
+    supervisor and returns immediately. Workers continue independently."""
+    import yaml
+    from .orchestrate import ExperimentRegistry, Scheduler, runs_root
+    policy = {}
+    for cand in ("config/ai-policy.v1.yaml", "../config/ai-policy.v1.yaml"):
+        if os.path.exists(cand):
+            with open(cand) as f:
+                policy = yaml.safe_load(f) or {}
+            break
+    auto = policy.get("automation", {})
+    ml = policy.get("market_ml", {})
+    root = runs_root(args.runs)
+    reg = ExperimentRegistry(root)
+    active = [e for e in reg.exps.values() if e["status"] in ("QUEUED", "RUNNING")]
+    submitted = []
+    if not active:
+        ddir, manifest = _discover_default_dataset(args.datasets)
+        budget = int(auto.get("max_experiments_per_cycle", 3))
+        epochs = int(auto.get("default_epochs", 5))
+        hp = dict((ml.get("hyperparameters") or {}))
+        backtest_bars = None
+        from .orchestrate import repo_root
+        cand_bars = os.path.join(repo_root(), "data", "processed",
+                                 manifest["dataset_version"], "backtest-bars.json")
+        if os.path.exists(cand_bars):
+            backtest_bars = cand_bars
+        for seed in [7, 11, 13, 17, 23][:budget]:
+            hp_seed = dict(hp)
+            hp_seed["random_state"] = seed
+            d = {"dataset_dir": ddir, "dataset_version": manifest["dataset_version"],
+                 "model_type": ml.get("model_type", "sgd-logloss"),
+                 "hyperparameters": hp_seed, "seed": seed, "epochs": epochs,
+                 "device": "cpu"}
+            if backtest_bars:
+                d["backtest_bars"] = backtest_bars
+            try:
+                rec = reg.submit(d)
+                submitted.append(rec["experiment_id"])
+            except Exception:
+                pass  # existing ID: immutable history, never resubmitted
+    if args.once:
+        sched, gates = _load_gates()
+        s = Scheduler(root, sched, backtest_runner=_node_backtest_runner)
+        cycle = s.cycle(detach=True)
+        print(json.dumps({"status": "OK", "mode": "once", "runs_root": root,
+                          "submitted": submitted, "cycle": cycle,
+                          "next": "workers continue independently; use auto-status"},
+                         indent=2, default=str))
+        return 0
+    pid = _spawn_supervisor(os.path.abspath(root), args.interval)
+    print(json.dumps({"status": "OK", "mode": "supervised", "runs_root": root,
+                      "submitted": submitted, "supervisor_pid": pid,
+                      "message": "automated training started; workers continue independently"},
+                     indent=2))
     return 0
 
 
@@ -444,6 +546,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("auto-start"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_start)
     s = sub.add_parser("auto-supervise"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_supervise)
     s = sub.add_parser("auto-worker"); s.add_argument("--exp-dir", required=True); s.add_argument("--resume", action="store_true"); s.set_defaults(fn=_cmd_auto_worker)
+    s = sub.add_parser("auto-train"); s.add_argument("--runs", default=None); s.add_argument("--datasets", default=None); s.add_argument("--interval", type=int, default=30); s.add_argument("--once", action="store_true"); s.set_defaults(fn=_cmd_auto_train)
     return p
 
 

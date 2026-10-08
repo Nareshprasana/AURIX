@@ -63,3 +63,6 @@ automation:
   min_oos_edge_vs_baseline: 0.01
   max_backtest_drawdown_pct: 10.0
   require_backtest_completed: true
+  # Optional override for `aurix train` dataset discovery; when absent the
+  # newest valid versioned dataset under data/datasets is used.
+  # default_dataset_dir: null

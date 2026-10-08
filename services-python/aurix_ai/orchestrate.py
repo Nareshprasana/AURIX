@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 
 from . import __version__ as CODE_VERSION
@@ -41,6 +42,34 @@ def runs_root(explicit: str | None = None) -> str:
     if env:
         return env
     return os.path.join(repo_root(), "data", "runs")
+
+
+def protected_roots() -> list:
+    """Production/local training roots. NEVER recursively deleted by any
+    orchestrator, test, or verification cleanup (see SAFETY INCIDENT:
+    data/runs/real-nse-001 loss). Cleanup is only ever allowed inside an
+    isolated temporary test root created by the current test."""
+    rr = repo_root()
+    return [os.path.join(rr, "data", "runs"),
+            os.path.join(rr, "data", "datasets"),
+            os.path.join(rr, "data", "processed")]
+
+
+def assert_safe_cleanup(path: str) -> str:
+    """Guard for any recursive-delete helper: raises on protected roots or
+    anything outside an isolated temporary directory."""
+    from pathlib import Path
+    p = Path(os.path.abspath(path)).resolve()
+    tmp = Path(tempfile.gettempdir()).resolve()
+    if p == tmp:
+        raise fail("INVALID_CONFIG", f"refusing cleanup of temp root itself: {p}")
+    for prot in protected_roots():
+        rp = Path(os.path.abspath(prot)).resolve()
+        if p == rp or rp in p.parents or p in rp.parents:
+            raise fail("INVALID_CONFIG", f"refusing cleanup of protected root: {p}")
+    if tmp not in p.parents:
+        raise fail("INVALID_CONFIG", f"cleanup only allowed inside isolated temp dirs: {p}")
+    return str(p)
 
 
 def utc_ms() -> int:
