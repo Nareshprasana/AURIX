@@ -163,15 +163,17 @@ export class MemoryManager {
     if (filter.strategy !== undefined && data['strategy'] !== filter.strategy) return null;
     if (filter.event !== undefined && data['event'] !== filter.event) return null;
     if (filter.agent !== undefined) return null; // nodes are not agent-scoped
-    if (!this.passCommon(n.created_at, null, n.label_class, filter)) return null;
+    // Recorded confidence only (e.g. research bundles carry theirs); never invented.
+    const nodeConfidence = typeof data['confidence'] === 'number' ? (data['confidence'] as number) : null;
+    if (!this.passCommon(n.created_at, nodeConfidence, n.label_class, filter)) return null;
     const domain = (str(data['domain']) ?? 'default') as MemoryDomain;
     const freshness = classifyMemoryAge(domain, now - n.created_at);
     const validation = n.label_class === 'FACT' ? 'validated' : n.label_class === 'OBSERVATION' ? 'observed' : 'unvalidated';
     return {
       kind: 'node', id: n.id, entity, topic, domain,
-      created_at: n.created_at, last_verified_at: n.created_at, confidence: null,
+      created_at: n.created_at, last_verified_at: n.created_at, confidence: nodeConfidence,
       label: n.label_class, validation,
-      relevance: this.baseRelevance({ entityMatch: filter.entity !== undefined && entityMatch, topicMatch: filter.topic !== undefined && topicMatch, freshness, validation, confidence: null }),
+      relevance: this.baseRelevance({ entityMatch: filter.entity !== undefined && entityMatch, topicMatch: filter.topic !== undefined && topicMatch, freshness, validation, confidence: nodeConfidence }),
       record: { id: n.id, kind: n.kind, label: n.label, data: n.data, version: n.version }
     };
   }
@@ -216,23 +218,48 @@ export class MemoryManager {
     const now = request.now ?? Date.now();
     const minConfidence = request.minConfidence ?? 0.5;
     const evidenceThreshold = request.evidenceThreshold ?? 1;
-    const candidates = this.retrieve({ entity: request.subject, topic: request.topic, requester: request.agent }, now);
+    // Entity-scoped retrieval; the topic focuses selection, never blinds the lookup.
+    const candidates = this.retrieve({ entity: request.subject, requester: request.agent }, now);
     if (candidates.length === 0) {
       return { decision: 'RESEARCH', basis: [`no candidates for ${request.subject}`], candidates };
     }
-    // Contradiction: same subject+topic, distinct validated-looking content.
+    const pool = request.topic ? candidates.filter((c) => c.topic === request.topic) : candidates;
+    const scoped = pool.length > 0 ? pool : candidates;
+    // Superseded tasks are history, not live claims: exclude their records so
+    // refreshed conclusions do not false-conflict with the runs they replaced.
+    const superseded = new Set(
+      this.findTasks().filter((t) => t.status === 'SUPERSEDED').map((t) => t.task_id)
+    );
+    const live = scoped.filter((c) => {
+      const rec = (c.record ?? {}) as { data?: Record<string, unknown>; content?: Record<string, unknown>; kind?: string; id?: string };
+      const data = (rec.data ?? rec.content ?? {}) as Record<string, unknown>;
+      const linked = typeof data['task_id'] === 'string'
+        ? data['task_id']
+        : rec.kind === 'Experiment' && typeof rec.id === 'string'
+          ? rec.id
+          : null;
+      return linked === null || !superseded.has(linked);
+    });
+    // Contradiction: same subject+topic+shape, distinct validated-looking content.
+    // Grouping includes the metric (when present) and the content key-set so that
+    // heterogeneous records (bundles, tasks, agent notes) never false-conflict.
     const byTopic = new Map<string, RetrievalHit[]>();
-    for (const c of candidates) {
+    for (const c of live) {
       if (c.validation === 'validated' || c.validation === 'observed') {
-        const list = byTopic.get(c.topic) ?? [];
+        const content = (c.record as { data?: unknown; content?: unknown }).data ?? (c.record as { content?: unknown }).content;
+        const rec = (content && typeof content === 'object' ? content : {}) as Record<string, unknown>;
+        const metric = typeof rec['metric'] === 'string' ? rec['metric'] : '';
+        const keys = Object.keys(rec).sort().join(',');
+        const group = `${c.topic}|${metric}|${keys}`;
+        const list = byTopic.get(group) ?? [];
         list.push(c);
-        byTopic.set(c.topic, list);
+        byTopic.set(group, list);
       }
     }
-    for (const [topic, list] of byTopic) {
+    for (const [group, list] of byTopic) {
       const contents = new Set(list.map((c) => stableStringify((c.record as { data?: unknown; content?: unknown }).data ?? (c.record as { content?: unknown }).content)));
       if (contents.size > 1) {
-        return { decision: 'CONFLICT', basis: [`${contents.size} contradictory validated-looking records on topic ${topic}`], candidates };
+        return { decision: 'CONFLICT', basis: [`${contents.size} contradictory validated-looking records in group ${group}`], candidates };
       }
     }
     const markers = this.markersFor(request.subject, request.topic ? `${request.topic}:${request.subject}` : undefined);
@@ -240,17 +267,23 @@ export class MemoryManager {
         markers.some((m) => (m.content as { status?: string }).status === 'INVALIDATED')) {
       return { decision: 'CONFLICT', basis: ['invalidation marker records contradiction'], candidates };
     }
-    const confident = candidates.filter((c) => (c.confidence ?? 0) >= minConfidence);
+    const confident = live.filter((c) => (c.confidence ?? 0) >= minConfidence);
+    const best = [...live].sort((a, b) => b.relevance.score - a.relevance.score)[0];
+    // Staleness outranks weak evidence: stale records need refresh (re-gathering),
+    // while fresh-but-weak records are genuinely insufficient.
+    if (best) {
+      const fresh = this.freshnessOf(best, now);
+      const staleMarked = markers.some((m) => ['STALE', 'SUPERSEDED', 'INVALIDATED'].includes((m.content as { status?: string }).status ?? ''));
+      if (fresh === 'STALE' || staleMarked) {
+        return { decision: 'REFRESH', basis: [`best candidate ${best.id} is ${fresh}${staleMarked ? ' + marked stale' : ''}`], candidates };
+      }
+    }
     if (confident.length < evidenceThreshold) {
-      return { decision: 'INSUFFICIENT', basis: [`${confident.length}/${candidates.length} meet confidence ${minConfidence} (need ${evidenceThreshold})`], candidates };
+      return { decision: 'INSUFFICIENT', basis: [`${confident.length}/${live.length} meet confidence ${minConfidence} (need ${evidenceThreshold})`], candidates };
     }
-    const best = [...candidates].sort((a, b) => b.relevance.score - a.relevance.score)[0]!;
-    const fresh = this.freshnessOf(best, now);
-    const staleMarked = markers.some((m) => ['STALE', 'SUPERSEDED', 'INVALIDATED'].includes((m.content as { status?: string }).status ?? ''));
-    if (fresh === 'STALE' || staleMarked) {
-      return { decision: 'REFRESH', basis: [`best candidate ${best.id} is ${fresh}${staleMarked ? ' + marked stale' : ''}`], candidates };
-    }
-    return { decision: 'REUSE', basis: [`${best.id} ${fresh}, ${best.validation}, confidence ${best.confidence ?? 'unknown'}`], candidates };
+    const reuse = [...live].sort((a, b) => b.relevance.score - a.relevance.score)[0]!;
+    const reuseFresh = this.freshnessOf(reuse, now);
+    return { decision: 'REUSE', basis: [`${reuse.id} ${reuseFresh}, ${reuse.validation}, confidence ${reuse.confidence ?? 'unknown'}`], candidates };
   }
 
   // -- research tasks -----------------------------------------------------------

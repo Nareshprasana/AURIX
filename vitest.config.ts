@@ -22,7 +22,8 @@ const alias = {
   '@aurix/sync-protocol': `${root}packages/sync-protocol/src/index.ts`,
   '@aurix/sync-manager': `${root}apps/sync-manager/src/index.ts`,
   '@aurix/market-data': `${root}packages/market-data/src/index.ts`,
-  '@aurix/memory-manager': `${root}apps/memory-manager/src/index.ts`
+  '@aurix/memory-manager': `${root}apps/memory-manager/src/index.ts`,
+  '@aurix/research-agents': `${root}apps/research-agents/src/index.ts`
 };
 
 export default defineConfig({

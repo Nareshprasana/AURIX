@@ -1,0 +1,14 @@
+{
+  "name": "@aurix/research-agents",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@aurix/contracts": "workspace:*",
+    "@aurix/knowledge-service": "workspace:*",
+    "@aurix/market-data": "workspace:*",
+    "@aurix/memory-manager": "workspace:*",
+    "@aurix/observability": "workspace:*"
+  }
+}

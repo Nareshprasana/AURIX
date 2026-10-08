@@ -89,6 +89,24 @@ importers:
         specifier: workspace:*
         version: link:../../packages/contracts
 
+  apps/research-agents:
+    dependencies:
+      '@aurix/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@aurix/knowledge-service':
+        specifier: workspace:*
+        version: link:../knowledge-service
+      '@aurix/market-data':
+        specifier: workspace:*
+        version: link:../../packages/market-data
+      '@aurix/memory-manager':
+        specifier: workspace:*
+        version: link:../memory-manager
+      '@aurix/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+
   apps/sync-manager:
     dependencies:
       '@aurix/contracts':

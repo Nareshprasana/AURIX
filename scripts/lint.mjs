@@ -81,6 +81,33 @@ for (const rel of PHASE4_FILES) {
     failures++;
   }
 }
+// Research agents: observations only. No broker/execution/risk/portfolio/gateway,
+// no order-construction identifiers, no training.
+const RESEARCH_FILES = [
+  'apps/research-agents/src/types.ts',
+  'apps/research-agents/src/sources.ts',
+  'apps/research-agents/src/context.ts',
+  'apps/research-agents/src/orchestrator.ts',
+  'apps/research-agents/src/agents/fundamental.ts',
+  'apps/research-agents/src/agents/technical.ts',
+  'apps/research-agents/src/agents/valuation.ts',
+  'apps/research-agents/src/agents/sentiment.ts',
+  'apps/research-agents/src/agents/macro.ts',
+  'apps/research-agents/src/agents/events.ts'
+];
+for (const rel of RESEARCH_FILES) {
+  const p = join(ROOT, rel);
+  if (!existsSync(p)) continue;
+  const text = readFileSync(p, 'utf8');
+  if (/@aurix\/(broker-sim|broker-kite|execution-service|risk-engine|portfolio-engine|model-gateway)|research-agents/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: research must not import broker/execution/risk/portfolio/gateway`);
+    failures++;
+  }
+  if (/\bplaceOrder\b|BrokerPort|kiteconnect/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: research must not construct orders`);
+    failures++;
+  }
+}
 if (failures > 0) {
   console.error(`${failures} lint violation(s)`);
   process.exit(1);

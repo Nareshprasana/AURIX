@@ -274,3 +274,104 @@ export interface KnowledgeExportPackage {
   embeddings: EmbeddingRecord[];
   checksums: Record<string, string>;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Research & Event Intelligence domain. Structured outputs only:
+// observations and conclusions, never executable trade decisions (no order,
+// position, leverage or capital fields exist anywhere in this contract).
+// ---------------------------------------------------------------------------
+
+export type ResearchStatus =
+  | 'COMPLETED' | 'PARTIAL' | 'INSUFFICIENT_DATA' | 'CONFLICTED'
+  | 'SOURCE_UNAVAILABLE' | 'DATA_QUARANTINED' | 'MODEL_UNAVAILABLE'
+  | 'TIMEOUT' | 'FAILED';
+
+export interface EvidenceItem {
+  evidence_id: string;
+  kind: string;
+  subject: string;
+  content: Record<string, unknown>;
+  source: string;
+  source_type: SourceType;
+  source_identifier: string;
+  observed_at: number;
+  retrieved_at: number;
+  confidence: number;
+}
+
+export interface ResearchObservation {
+  observation_id: string;
+  subject: string;
+  statement: string;
+  metric?: string;
+  value?: number | string;
+  period?: string;
+  methodology: string;
+  inputs_ref: string[];
+  data_quality: 'VALID' | 'SUSPECT' | 'QUARANTINED' | 'UNKNOWN';
+  confidence: number;
+}
+
+export interface KnowledgeProposalRef {
+  assertion: KnowledgeLabel;
+  summary: string;
+  entity_refs: string[];
+}
+
+export interface AgentResult {
+  research_task_id: string;
+  agent: string;
+  subject: string;
+  status: ResearchStatus;
+  observations: ResearchObservation[];
+  evidence: EvidenceItem[];
+  sources: string[];
+  methodology: string;
+  assumptions: string[];
+  contradictions: string[];
+  conclusions: string[];
+  confidence: number;
+  knowledge_proposals: KnowledgeProposalRef[];
+  missing: string[];
+  created_at: number;
+}
+
+export interface ResearchResultBundle {
+  task_id: string;
+  subject: string;
+  objective: string;
+  scope: string;
+  status: ResearchStatus;
+  agent_results: AgentResult[];
+  observations: ResearchObservation[];
+  evidence: EvidenceItem[];
+  contradictions: string[];
+  confidence: number;
+  conclusion: string;
+  depends_on: string[];
+  knowledge_refs: string[];
+  sources_excluded: string[];
+  created_at: number;
+}
+
+export interface SourceQualityPolicy {
+  authority: Record<SourceType, number>;
+  minAuthority: number;
+  duplicateJaccard: number;
+}
+
+export const DEFAULT_SOURCE_QUALITY: SourceQualityPolicy = {
+  authority: {
+    'exchange-filing': 1.0,
+    regulator: 1.0,
+    'audited-statement': 0.95,
+    'market-data': 0.9,
+    press: 0.6,
+    agent: 0.5,
+    human: 0.5,
+    llm: 0.3,
+    other: 0.4
+  },
+  minAuthority: 0.3,
+  duplicateJaccard: 0.8
+};

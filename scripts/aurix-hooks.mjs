@@ -20,7 +20,8 @@ const MAP = {
   '@aurix/sync-protocol': '../dist/packages/sync-protocol/src/index.js',
   '@aurix/sync-manager': '../dist/apps/sync-manager/src/index.js',
   '@aurix/market-data': '../dist/packages/market-data/src/index.js',
-  '@aurix/memory-manager': '../dist/apps/memory-manager/src/index.js'
+  '@aurix/memory-manager': '../dist/apps/memory-manager/src/index.js',
+  '@aurix/research-agents': '../dist/apps/research-agents/src/index.js'
 };
 
 export async function resolve(specifier, context, next) {
