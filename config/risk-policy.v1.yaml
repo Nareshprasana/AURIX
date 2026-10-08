@@ -1,0 +1,17 @@
+# Risk policy v1 — conservative Phase 1 defaults (versioned: "risk policy v1").
+version: v1
+max_position_notional_pct: 2.0
+max_portfolio_gross_pct:
+  paper_shadow: 60.0
+  controlled_live: 25.0
+max_sector_pct: 20.0
+max_leverage: 1.0
+max_margin_util_pct: 50.0
+max_daily_loss_pct: 1.5
+max_drawdown_pct: 8.0
+liquidity_max_adv_pct: 5.0
+liquidity_max_spread_bps: 50
+concentration_top5_pct: 40.0
+abnormal_market_haircut_pct: 50
+abnormal_states: [HALT, AUCTION, HIGH_VOLATILITY, EVENT_DRIVEN]
+kill_switches: [trade, strategy, agent, model, global]

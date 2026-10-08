@@ -1,0 +1,11 @@
+{
+  "name": "@aurix/broker-sim",
+  "version": "1.0.1",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@aurix/contracts": "workspace:*",
+    "@aurix/execution-interface": "workspace:*"
+  }
+}

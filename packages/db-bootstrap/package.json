@@ -1,0 +1,7 @@
+{
+  "name": "@aurix/db-bootstrap",
+  "version": "1.0.1",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts"
+}

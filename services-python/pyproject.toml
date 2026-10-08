@@ -1,0 +1,13 @@
+[project]
+name = "aurix-py"
+version = "1.0.1"
+description = "AURIX Python workspace — Phase 1 stubs only (no prod agents/training)"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

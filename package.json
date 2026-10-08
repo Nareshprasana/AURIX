@@ -1,0 +1,20 @@
+{
+  "name": "aurix",
+  "version": "1.0.1",
+  "private": true,
+  "description": "AURIX — Autonomous Unified Risk & Intelligence eXchange (local-first, Phase 1 foundation)",
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "node scripts/lint.mjs"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^26.6.4",
+    "js-yaml": "^4.1.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

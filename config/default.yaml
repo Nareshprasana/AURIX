@@ -1,0 +1,28 @@
+# AURIX Phase 1 defaults — RESEARCH + sim only. Live unreachable.
+mode: RESEARCH
+broker: sim
+exchange_scope:
+  - NSE
+model_gateway:
+  provider: stub
+  model: stub-echo-v1
+  endpoint: http://127.0.0.1:11434
+  timeout_ms: 30000
+  generation:
+    temperature: 0.2
+    max_tokens: 1024
+data:
+  timeframes: [1m, 5m, 15m, 1h, 1D]
+  staleness_s:
+    1m: 120
+    1D: 86400
+safety:
+  bind_localhost_only: true
+  require_risk_verdict: true
+  require_safety_gate: true
+  unknown_means_blocked: true
+  allow_live: false
+  decision_ttl_s: 60
+  market_data_staleness_s: 120
+promotion:
+  state: DRAFT

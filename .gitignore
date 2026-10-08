@@ -1,0 +1,47 @@
+# Secrets & env
+.env
+.env.*
+*.pem
+*.key
+secrets/
+credentials.json
+
+# Runtime data (never commit)
+data/
+*.db
+*.db-wal
+*.db-shm
+*.duckdb
+*.parquet
+logs/
+*.log
+
+# Model weights & datasets
+*.bin
+*.safetensors
+*.onnx
+*.pt
+models/
+weights/
+datasets/*.parquet
+data/blob/artifacts/
+
+# Knowledge exports (may contain sensitive state)
+data/knowledge-exports/
+*.akpkg
+
+# Deps & build
+node_modules/
+dist/
+build/
+.coverage/
+__pycache__/
+*.pyc
+.venv/
+uv.lock
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

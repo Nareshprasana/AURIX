@@ -1,0 +1,22 @@
+# Seed instruments — DATA ONLY. NSE is a config value; core model stays generic.
+# Fields follow packages/contracts generic model: exchange/market/segment/symbol/lot/tick.
+- id: NSE_EQ_RELIANCE
+  exchange: NSE
+  market: equity
+  segment: EQ
+  symbol: RELIANCE
+  isin: INE002A01018
+  lot_size: 1
+  tick_size: 0.05
+  contract: null
+  meta: { sector: Energy }
+- id: NSE_EQD_NIFTY25JAN_FUT
+  exchange: NSE
+  market: equity-derivatives
+  segment: EQ-D
+  symbol: NIFTY
+  isin: null
+  lot_size: 25
+  tick_size: 0.05
+  contract: { kind: FUT, expiry: '2025-01-30' }
+  meta: {}
