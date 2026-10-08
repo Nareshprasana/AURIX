@@ -16,7 +16,8 @@
     "verify:memory": "node --import ./scripts/aurix-register.mjs scripts/verify-memory.mjs",
     "verify:research": "node --import ./scripts/aurix-register.mjs scripts/verify-research.mjs",
     "verify:cumulative": "node --import ./scripts/aurix-register.mjs scripts/verify-cumulative.mjs",
-    "verify:strategy": "node --import ./scripts/aurix-register.mjs scripts/verify-strategy.mjs"
+    "verify:strategy": "node --import ./scripts/aurix-register.mjs scripts/verify-strategy.mjs",
+    "verify:portfolio": "node --import ./scripts/aurix-register.mjs scripts/verify-portfolio.mjs"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

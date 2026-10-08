@@ -1,0 +1,27 @@
+# Portfolio policy v1 — simulation-only extras. Core safety limits are inherited
+# from risk-policy.v1.yaml (2% position, 60% gross, 20% sector, 1.0 leverage,
+# 50% margin, 1.5% daily loss, 8% drawdown, 5% ADV, 50bps spread, 40% top-5,
+# 50% abnormal haircut). Nothing here weakens those defaults.
+version: portfolio-policy-v1
+risk_policy_version: v1
+allocation:
+  default_method: hybrid
+  max_weight_pct: 2.0
+  hybrid_mix: { signal: 0.4, volatility: 0.3, confidence: 0.2, liquidity: 0.1 }
+drawdown:
+  caution_pct: 4.0
+  restricted_pct: 6.0
+  halt_pct: 8.0
+turnover:
+  budget_pct: 25.0
+unknown_sector_cap_pct: 10.0
+correlation:
+  threshold: 0.7
+  cluster_cap_pct: 6.0
+sizing:
+  default_method: fixed-fraction
+  fixed_fraction_pct: 2.0
+  volatility_target_pct: 1.0
+  risk_budget_pct: 0.5
+  max_loss_pct: 1.0
+  adv_pct: 5.0

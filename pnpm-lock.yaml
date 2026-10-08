@@ -110,6 +110,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/contracts
 
+  apps/portfolio-service:
+    dependencies:
+      '@aurix/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@aurix/knowledge-service':
+        specifier: workspace:*
+        version: link:../knowledge-service
+      '@aurix/memory-manager':
+        specifier: workspace:*
+        version: link:../memory-manager
+      '@aurix/portfolio':
+        specifier: workspace:*
+        version: link:../../packages/portfolio
+
   apps/research-agents:
     dependencies:
       '@aurix/contracts':
@@ -178,6 +193,15 @@ importers:
       '@aurix/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/portfolio:
+    dependencies:
+      '@aurix/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@aurix/strategy':
+        specifier: workspace:*
+        version: link:../strategy
 
   packages/portfolio-engine:
     dependencies:

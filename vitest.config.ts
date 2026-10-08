@@ -25,7 +25,9 @@ const alias = {
   '@aurix/memory-manager': `${root}apps/memory-manager/src/index.ts`,
   '@aurix/research-agents': `${root}apps/research-agents/src/index.ts`,
   '@aurix/strategy': `${root}packages/strategy/src/index.ts`,
-  '@aurix/backtest': `${root}apps/backtest/src/index.ts`
+  '@aurix/backtest': `${root}apps/backtest/src/index.ts`,
+  '@aurix/portfolio': `${root}packages/portfolio/src/index.ts`,
+  '@aurix/portfolio-service': `${root}apps/portfolio-service/src/index.ts`
 };
 
 export default defineConfig({

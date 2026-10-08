@@ -27,7 +27,9 @@
       "@aurix/memory-manager": ["./apps/memory-manager/src/index.ts"],
       "@aurix/research-agents": ["./apps/research-agents/src/index.ts"],
       "@aurix/strategy": ["./packages/strategy/src/index.ts"],
-      "@aurix/backtest": ["./apps/backtest/src/index.ts"]
+      "@aurix/backtest": ["./apps/backtest/src/index.ts"],
+      "@aurix/portfolio": ["./packages/portfolio/src/index.ts"],
+      "@aurix/portfolio-service": ["./apps/portfolio-service/src/index.ts"]
     }
   },
   "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "apps/*/src/**/*.ts", "apps/*/test/**/*.ts", "apps/brokers/*/src/**/*.ts", "apps/brokers/*/test/**/*.ts", "scripts/**/*.mjs"]

@@ -23,7 +23,9 @@ const MAP = {
   '@aurix/memory-manager': '../dist/apps/memory-manager/src/index.js',
   '@aurix/research-agents': '../dist/apps/research-agents/src/index.js',
   '@aurix/strategy': '../dist/packages/strategy/src/index.js',
-  '@aurix/backtest': '../dist/apps/backtest/src/index.js'
+  '@aurix/backtest': '../dist/apps/backtest/src/index.js',
+  '@aurix/portfolio': '../dist/packages/portfolio/src/index.js',
+  '@aurix/portfolio-service': '../dist/apps/portfolio-service/src/index.js'
 };
 
 export async function resolve(specifier, context, next) {

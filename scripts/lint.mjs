@@ -142,6 +142,34 @@ for (const rel of STRATEGY_FILES) {
     failures++;
   }
 }
+// Portfolio/risk layer: hypothetical decisions only. No broker/execution/live-trading,
+// no gateway/training/research coupling, no dynamic code, no secrets handling.
+const PORTFOLIO_FILES = [
+  'packages/portfolio/src/types.ts',
+  'packages/portfolio/src/capital.ts',
+  'packages/portfolio/src/allocation.ts',
+  'packages/portfolio/src/risk.ts',
+  'packages/portfolio/src/sizing.ts',
+  'packages/portfolio/src/rebalance.ts',
+  'apps/portfolio-service/src/service.ts'
+];
+for (const rel of PORTFOLIO_FILES) {
+  const p = join(ROOT, rel);
+  if (!existsSync(p)) continue;
+  const text = readFileSync(p, 'utf8');
+  if (/@aurix\/(broker-sim|broker-kite|execution-service|risk-engine|portfolio-engine|model-gateway)|research-agents|ml-training|kiteconnect/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: portfolio layer must not touch broker/execution/risk-live/gateway/research/training`);
+    failures++;
+  }
+  if (/\bplaceOrder\b|BrokerPort/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: portfolio layer must not construct real orders`);
+    failures++;
+  }
+  if (/\beval\s*\(|new Function\s*\(|child_process|execSync|spawnSync/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: no dynamic code execution in portfolio layer`);
+    failures++;
+  }
+}
 if (failures > 0) {
   console.error(`${failures} lint violation(s)`);
   process.exit(1);

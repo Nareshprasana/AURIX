@@ -1,0 +1,13 @@
+{
+  "name": "@aurix/portfolio-service",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@aurix/contracts": "workspace:*",
+    "@aurix/portfolio": "workspace:*",
+    "@aurix/knowledge-service": "workspace:*",
+    "@aurix/memory-manager": "workspace:*"
+  }
+}
