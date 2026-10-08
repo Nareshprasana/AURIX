@@ -22,7 +22,9 @@
       "@aurix/system-health": ["./apps/system-health/src/index.ts"],
       "@aurix/knowledge-service": ["./apps/knowledge-service/src/index.ts"],
       "@aurix/sync-protocol": ["./packages/sync-protocol/src/index.ts"],
-      "@aurix/sync-manager": ["./apps/sync-manager/src/index.ts"]
+      "@aurix/sync-manager": ["./apps/sync-manager/src/index.ts"],
+      "@aurix/market-data": ["./packages/market-data/src/index.ts"],
+      "@aurix/memory-manager": ["./apps/memory-manager/src/index.ts"]
     }
   },
   "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "apps/*/src/**/*.ts", "apps/*/test/**/*.ts", "apps/brokers/*/src/**/*.ts", "apps/brokers/*/test/**/*.ts", "scripts/**/*.mjs"]

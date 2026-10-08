@@ -64,6 +64,23 @@ for (const rel of SYNC_FILES) {
     failures++;
   }
 }
+// Memory + market-data: no broker/execution/live-trading/research-agent/training/gateway/network imports.
+const PHASE4_FILES = [
+  'packages/market-data/src/types.ts',
+  'packages/market-data/src/quality.ts',
+  'packages/market-data/src/events.ts',
+  'apps/memory-manager/src/manager.ts',
+  'apps/memory-manager/src/freshness.ts'
+];
+for (const rel of PHASE4_FILES) {
+  const p = join(ROOT, rel);
+  if (!existsSync(p)) continue;
+  const text = readFileSync(p, 'utf8');
+  if (/@aurix\/broker|@aurix\/execution|research-agents|ml-training|model-gateway|kiteconnect|from\s+['"]node:/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: phase 4 info layer must stay broker/execution/research/training/gateway/network-free`);
+    failures++;
+  }
+}
 if (failures > 0) {
   console.error(`${failures} lint violation(s)`);
   process.exit(1);

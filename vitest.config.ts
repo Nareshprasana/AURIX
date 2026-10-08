@@ -20,7 +20,9 @@ const alias = {
   '@aurix/system-health': `${root}apps/system-health/src/index.ts`,
   '@aurix/knowledge-service': `${root}apps/knowledge-service/src/index.ts`,
   '@aurix/sync-protocol': `${root}packages/sync-protocol/src/index.ts`,
-  '@aurix/sync-manager': `${root}apps/sync-manager/src/index.ts`
+  '@aurix/sync-manager': `${root}apps/sync-manager/src/index.ts`,
+  '@aurix/market-data': `${root}packages/market-data/src/index.ts`,
+  '@aurix/memory-manager': `${root}apps/memory-manager/src/index.ts`
 };
 
 export default defineConfig({
