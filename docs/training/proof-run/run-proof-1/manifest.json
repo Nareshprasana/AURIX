@@ -1,0 +1,48 @@
+{
+  "artifact": "artifact.joblib",
+  "artifact_sha256": "5366c348a4a6bfa820fb2928468f24d422da3fe166b0b018ab01390d9d3d0b4d",
+  "checkpoints": [
+    "checkpoint-0001.npz",
+    "checkpoint-0002.npz",
+    "checkpoint-0003.npz",
+    "checkpoint-0004.npz",
+    "checkpoint-0005.npz"
+  ],
+  "code_version": "0.1.0",
+  "configuration": {
+    "alpha": 0.0001,
+    "model_type": "sgd-logloss",
+    "random_state": 7
+  },
+  "configuration_hash": "3fad723cd92ee947",
+  "dataset_version": "aurix-synth-daily-1b5a788891b5",
+  "device": "cpu",
+  "elapsed_s": 2.4,
+  "ended_at": 1791458045035,
+  "epochs_trained": 5,
+  "feature_version": "feat-v1",
+  "framework_versions": {
+    "joblib": "1.6.0",
+    "laya": "0.4.0",
+    "numpy": "2.5.3",
+    "sklearn": "1.9.1",
+    "torch": "2.14.1+cpu"
+  },
+  "gpu": {
+    "name": "NVIDIA GeForce GTX 1650",
+    "present": true,
+    "torch_cuda": false,
+    "torch_version": "2.14.1+cpu",
+    "vram_total_mb": 4096,
+    "vram_used_mb": 2297
+  },
+  "label_version": "label-v1",
+  "model_id": "aurix-marketml-run-proof-1",
+  "model_version": "candidate-v1",
+  "python_version": "3.14.4",
+  "random_seed": 7,
+  "run_id": "run-proof-1",
+  "started_at": 1791458042636,
+  "status": "COMPLETED",
+  "steps": 5
+}

@@ -1,0 +1,11 @@
+{
+  "label": {
+    "type": "choice",
+    "instructions": "Classify the input into the correct category.",
+    "criteria": [
+      "LONG",
+      "SHORT",
+      "HOLD"
+    ]
+  }
+}

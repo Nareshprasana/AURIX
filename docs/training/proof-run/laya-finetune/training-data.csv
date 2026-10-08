@@ -1,0 +1,9 @@
+text,label
+RELIANCE momentum up size 1 percent,LONG
+INFY momentum down size 1 percent,SHORT
+RELIANCE flat no volume,HOLD
+INFY momentum up size 5 percent over cap,HOLD
+RELIANCE gap up strong volume,LONG
+INFY gap down strong volume,SHORT
+BANKNIFTY choppy mixed signals,HOLD
+RELIANCE slow drift up,LONG

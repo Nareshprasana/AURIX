@@ -1,0 +1,55 @@
+{
+  "checksum_sha256": "827ece8f339ec53f6954d08b03d4f47d9d076ae3085f3364c817fb4c432bb432",
+  "class_balance": {
+    "neg": 795,
+    "pos": 655
+  },
+  "created_at": 1701728000000,
+  "dataset_id": "aurix-synth-daily",
+  "dataset_version": "aurix-synth-daily-1b5a788891b5",
+  "date_range": [
+    1701728000000,
+    1764281600000
+  ],
+  "feature_spec": {
+    "causal": true,
+    "columns": [
+      "ret_1",
+      "ret_2",
+      "ret_3",
+      "ret_4",
+      "ret_5",
+      "mom_10",
+      "vol_10",
+      "vol_ratio"
+    ],
+    "max_lookback_bars": 20,
+    "version": "feat-v1"
+  },
+  "instruments": [
+    "NSE_EQ_RELIANCE",
+    "NSE_EQ_INFY"
+  ],
+  "label_spec": {
+    "definition": "forward return over horizon > threshold",
+    "horizon_bars": 5,
+    "threshold": 0.005,
+    "version": "label-v1"
+  },
+  "n_rows": 1450,
+  "preprocessing_version": "prep-v1",
+  "seed": 7,
+  "source": "aurix-synthetic-ohlcv",
+  "test_range": [
+    1751840000000,
+    1764281600000
+  ],
+  "train_range": [
+    1701728000000,
+    1739225600000
+  ],
+  "val_range": [
+    1739312000000,
+    1751753600000
+  ]
+}

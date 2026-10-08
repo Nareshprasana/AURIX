@@ -1,0 +1,2 @@
+{"assertion": "OBSERVATION", "kind": "training-run", "refs": {"run_id": "run-proof-1", "dataset_version": "aurix-synth-daily-1b5a788891b5", "epochs": 3}}
+{"assertion": "OBSERVATION", "kind": "training-run", "refs": {"run_id": "run-proof-1", "dataset_version": "aurix-synth-daily-1b5a788891b5", "epochs": 5}}

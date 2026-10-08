@@ -1,0 +1,17 @@
+{
+  "status": "OK",
+  "signal": {
+    "laya_version": "0.4.0",
+    "instrument": "NSE_EQ_RELIANCE daily momentum long candidate, size 1 percent of",
+    "as_of": 1791457699886,
+    "decision": "{'model': 'laya-rl-agent', 'answers': {'direction': {'type': 'choice', 'choice': 'LONG', 'probabilities': {'LONG': 0.7843, 'SHORT': 0.1058, 'HOLD': 0.1099}, 'confidence': 0.3894, 'answer_confidence': 0.7843, 'action': {'act_probability': 1.0}}, 'risk_ok': {'type': 'noul', 'noul': 0.1791, 'confidence': 0.8209, 'answer_confidence': 0.8209, 'action': {'act_probability': 1.0}}}, 'usage': {'input_tokens': 99, 'output_tokens': 0, 'state_tokens': 18, 'state_tokens_dropped': 0, 'truncated': False, 'trun",
+    "confidence": 0.0,
+    "questions": [
+      "direction",
+      "risk_ok"
+    ],
+    "evidence_refs": [],
+    "trace_id": "laya-1791457682068",
+    "device": "cpu"
+  }
+}

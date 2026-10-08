@@ -1,0 +1,16 @@
+{
+  "aurix-marketml-run-proof-1": {
+    "artifact_sha256": "5366c348a4a6bfa820fb2928468f24d422da3fe166b0b018ab01390d9d3d0b4d",
+    "history": [
+      {
+        "at": 1791458051,
+        "operator": "proof-operator",
+        "reason": "registered from training run",
+        "to": "CANDIDATE"
+      }
+    ],
+    "model_id": "aurix-marketml-run-proof-1",
+    "run_id": "run-proof-1",
+    "state": "CANDIDATE"
+  }
+}
