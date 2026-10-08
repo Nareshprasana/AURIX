@@ -24,14 +24,60 @@ for (const pkg of GUARDED) {
   }
 }
 // Execution service must not import model-gateway or research code.
+import { readdirSync as readdirSyncExec } from 'node:fs';
 const EXEC_FILES = ['apps/execution-service/src/index.ts'];
-for (const rel of EXEC_FILES) {
+try {
+  for (const f of readdirSyncExec(join(ROOT, 'apps/execution-service/src'))) {
+    if (f.endsWith('.ts')) EXEC_FILES.push(`apps/execution-service/src/${f}`);
+  }
+} catch { /* ignore */ }
+for (const rel of [...new Set(EXEC_FILES)]) {
   const p = join(ROOT, rel);
   if (!existsSync(p)) continue;
   const text = readFileSync(p, 'utf8');
   if (/model-gateway|research-agents|ml-training/i.test(text)) {
     console.error(`LINT FAIL ${rel}: execution must not import LLM/research/training`);
     failures++;
+  }
+  if (/api[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: execution must not embed broker secrets`);
+    failures++;
+  }
+}
+// Execution interface: no network/fetch/secrets/LLM; broker-kite: no HTTP/SDK/fetch.
+const EXEC_IFACE_FILES = ['packages/execution-interface/src/index.ts'];
+for (const rel of EXEC_IFACE_FILES) {
+  const p = join(ROOT, rel);
+  if (!existsSync(p)) continue;
+  const text = readFileSync(p, 'utf8');
+  if (/\bfetch\s*\(|from\s+['"]node:net['"]|kiteconnect|model-gateway|research-agents|ml-training/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: execution-interface must stay network/LLM/broker-SDK free`);
+    failures++;
+  }
+}
+const KITE_FILES = ['apps/brokers/broker-kite/src/index.ts'];
+for (const rel of KITE_FILES) {
+  const p = join(ROOT, rel);
+  if (!existsSync(p)) continue;
+  const text = readFileSync(p, 'utf8');
+  if (/\bfetch\s*\(|axios|kiteconnect|from\s+['"]node:(net|https?)['"]/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: kite-disabled must contain no live transport`);
+    failures++;
+  }
+  if (/api[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key/i.test(text)) {
+    console.error(`LINT FAIL ${rel}: kite-disabled must not embed secrets`);
+    failures++;
+  }
+}
+// Broker-sim: no real credentials, no live transport.
+{
+  const p = join(ROOT, 'apps/brokers/broker-sim/src/index.ts');
+  if (existsSync(p)) {
+    const text = readFileSync(p, 'utf8');
+    if (/\bfetch\s*\(|axios|kiteconnect|from\s+['"]node:net['"]/i.test(text)) {
+      console.error('LINT FAIL apps/brokers/broker-sim/src/index.ts: sim must not use live transport');
+      failures++;
+    }
   }
 }
 // Knowledge service owns graph writes: no LLM/broker/training/network imports.

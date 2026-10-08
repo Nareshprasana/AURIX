@@ -1,8 +1,17 @@
-// @aurix/execution-service — Risk ALLOW + SafetyGate ALLOW + sim-only + mode/promotion.
+// @aurix/execution-service — Phase 8 entry (SIMULATION/PAPER only).
+// Canonical path: Execution Service -> Safety Gate -> Broker Adapter -> Broker.
+// Re-exports the full engine; routeOrder preserved for Phase 1 compatibility.
 import type { OrderCmd, RiskVerdict, SafetyContext } from '@aurix/contracts';
 import { validateOrder } from '@aurix/order-safety-gate';
 import type { BrokerOrder, BrokerPort } from '@aurix/execution-interface';
 import { Phase1DisabledError } from '@aurix/execution-interface';
+
+export * from './planner.js';
+export * from './engine.js';
+export * from './ledger.js';
+export * from './kill-switch.js';
+export * from './rate-limit.js';
+export * from './reconcile.js';
 
 export interface RouteRequest {
   cmd: OrderCmd;
@@ -23,7 +32,7 @@ export async function routeOrder(req: RouteRequest): Promise<BrokerOrder> {
   // 2. Safety gate independent check.
   const gate = validateOrder(req.cmd, { ...req.safetyCtx, riskVerdict: req.risk });
   if (gate.verdict !== 'ALLOW') throw new Error(`EXEC_REJECT: safety gate REJECT (${gate.reasons.join('; ')})`);
-  // 3. Phase 1: only sim broker kind may execute.
+  // 3. Phase 8: only sim broker kind may execute.
   if (req.broker.kind !== 'sim') throw new Phase1DisabledError(`execution-route:${req.broker.kind}`);
   return req.broker.placeOrder(req.cmd, { lastPrice: req.safetyCtx.lastPrice ?? undefined });
 }
