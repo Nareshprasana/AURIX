@@ -59,6 +59,7 @@ def run_worker(exp_dir: str, resume: bool = False) -> int:
                                                      "resume" if resume else "fresh"),
                          daemon=True)
     t.start()
+    failed = None
     try:
         X, y, _ts, _inst, ds = load_dataset(defn["dataset_dir"])
         cfg = dict(defn.get("hyperparameters", {}))
@@ -85,6 +86,7 @@ def run_worker(exp_dir: str, resume: bool = False) -> int:
                    {"checkpoints": out["manifest"]["checkpoints"]})
         return 0
     except Exception as e:
+        failed = str(e)
         emit_event(exp_dir, eid, "TRAINING_FAILED", {"error": str(e)})
         return 1
     finally:
@@ -96,7 +98,10 @@ def run_worker(exp_dir: str, resume: bool = False) -> int:
                 hb = json.load(open(hb_path))
             hb.update({"pid": os.getpid(), "ts": utc_ms(),
                        "epoch": _epoch_from_metrics(exp_dir),
-                       "checkpoint": _latest_ckpt(exp_dir), "status": "done"})
+                       "checkpoint": _latest_ckpt(exp_dir),
+                       "status": "failed" if failed else "done"})
+            if failed:
+                hb["error"] = failed
             json.dump(hb, open(hb_path, "w"))
         except Exception:
             pass

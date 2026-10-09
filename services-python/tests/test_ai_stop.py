@@ -66,7 +66,7 @@ def test_graceful_stop_of_synthetic_worker(tmp_path):
     ckpts = sorted(f for f in os.listdir(os.path.join(edir, "checkpoints")))
     assert len(ckpts) >= 1
     events = open(os.path.join(edir, "events.jsonl")).read()
-    assert "TRAINING_STOPPED" in events
+    assert "training.stopped" in events
     hb = read_heartbeat(edir)
     assert hb and hb.get("checkpoint") in ckpts
     # Worker was independent: someone else ran the training.

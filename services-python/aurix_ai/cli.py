@@ -304,18 +304,37 @@ def _cmd_auto_suggest(args) -> int:
 
 def _node_backtest_runner(bars_path: str, exp_dir: str) -> dict:
     import subprocess as _sp
+    import time as _time
     repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     script = os.path.join(repo, "scripts", "backtest-gate.mjs")
     hooks = os.path.join(repo, "scripts", "aurix-register.mjs")
+    record = {"stage": "backtest", "experiment_id": os.path.basename(exp_dir),
+              "worker_name": "backtest-worker", "worker_pid": os.getpid(),
+              "started_at": int(_time.time() * 1000), "stdout": "", "stderr": "",
+              "exit_code": None, "ended_at": None, "ok": False}
     try:
         r = _sp.run(["node", "--import", hooks, script, bars_path],
                     capture_output=True, text=True, timeout=300, cwd=repo)
+        record.update({"stdout": r.stdout or "EMPTY", "stderr": r.stderr or "EMPTY",
+                       "exit_code": r.returncode, "ended_at": int(_time.time() * 1000)})
         lines = [l for l in r.stdout.strip().split("\n") if l.strip()]
         if not lines:
             raise RuntimeError(f"empty stdout (rc={r.returncode}): {r.stderr.strip()[-500:]}")
-        return json.loads(lines[-1])
+        record.update(json.loads(lines[-1]))
+        record["ok"] = bool(record.get("ok"))
     except Exception as e:
-        return {"ok": False, "reason": f"backtest runner failed: {e}"}
+        record.update({"ended_at": int(_time.time() * 1000), "ok": False,
+                       "reason": f"backtest runner failed: {e}",
+                       "stderr": record.get("stderr") or "EMPTY",
+                       "stdout": record.get("stdout") or "EMPTY"})
+    try:
+        with open(os.path.join(exp_dir, "backtest-run.json"), "w") as f:
+            json.dump(record, f, indent=2)
+    except OSError:
+        pass
+    return {k: v for k, v in record.items()
+            if k in ("ok", "status", "orders", "fills", "trades", "signals",
+                     "max_drawdown_pct", "total_return", "limitations", "reason")}
 
 
 def _load_gates() -> tuple:
@@ -397,16 +416,13 @@ def _fmt_ms(ms: int | None) -> str:
     return f"{s // 60}m {s % 60}s"
 
 
-def _cmd_auto_stop(args) -> int:
-    """Graceful stop: halt supervisor at once (no new work), then wait for
-    each RUNNING worker to exit naturally so its per-epoch checkpoints stay
-    valid. Marks STOPPED + persists the event. Never deletes anything, never
-    kills blindly, never touches unrelated processes."""
+def _auto_stop_inner(root: str, timeout: int) -> dict:
+    """Shared stop implementation for CLI, TUI [S] key, and future frontend.
+    Returns a summary dict (never raises on absent work)."""
     import signal as _signal
     import time as _time
     from .orchestrate import (ExperimentRegistry, emit_event, pid_alive,
-                              read_heartbeat, request_stop, runs_root)
-    root = runs_root(args.runs)
+                              read_heartbeat, request_stop)
     request_stop(root)  # scheduler cycles become no-ops immediately
     summary: dict = {"supervisor": "absent", "stopped": [], "pending": []}
     pidfile = os.path.join(root, "supervisor.pid")
@@ -420,7 +436,7 @@ def _cmd_auto_stop(args) -> int:
                 os.kill(pid, _signal.SIGTERM)
             except Exception:
                 pass
-            for _ in range(30):  # ~15 s grace for the supervisor loop to exit
+            for _ in range(30):
                 if not pid_alive(pid):
                     break
                 _time.sleep(0.5)
@@ -429,10 +445,9 @@ def _cmd_auto_stop(args) -> int:
             summary["supervisor"] = "refused-self"
     reg = ExperimentRegistry(root)
     if not reg.running():
-        print(json.dumps({"status": "OK", **summary, "message": "No active AURIX training job."},
-                         indent=2))
-        return 0
-    timeout = max(5, int(args.timeout))
+        summary["message"] = "No active AURIX training job."
+        return summary
+    timeout = max(5, int(timeout))
     for exp in reg.running():
         eid = exp["experiment_id"]
         edir = os.path.join(root, eid)
@@ -450,15 +465,108 @@ def _cmd_auto_stop(args) -> int:
         if done:
             hb = read_heartbeat(edir) or {}
             reg.transition(eid, "STOPPED", "graceful user stop; checkpoints preserved")
-            emit_event(edir, eid, "TRAINING_STOPPED",
+            emit_event(edir, eid, "training.stopped",
                        {"epoch": hb.get("epoch"), "checkpoint": hb.get("checkpoint")})
             summary["stopped"].append(eid)
         else:
-            emit_event(edir, eid, "TRAINING_STOPPED",
+            emit_event(edir, eid, "training.stop_requested",
                        {"pending": True, "reason": "worker still running at timeout; no kill, no state change"})
             summary["pending"].append(eid)
+    return summary
+
+
+def _cmd_auto_stop(args) -> int:
+    from .orchestrate import runs_root
+    summary = _auto_stop_inner(runs_root(args.runs), args.timeout)
     print(json.dumps({"status": "OK", **summary}, indent=2))
     return 0
+
+
+def _cmd_auto_state(args) -> int:
+    """Machine-readable authoritative state (terminal UI, status, frontend)."""
+    import time as _time
+    from .orchestrate import runs_root
+    from .state import build_state
+    print(json.dumps(build_state(runs_root(args.runs),
+                                 int(_time.time() * 1000)), indent=2, default=str))
+    return 0
+
+
+def _cmd_auto_logs(args) -> int:
+    """Concise recent events/errors across experiments (also feeds the TUI)."""
+    import glob as _glob
+    from .orchestrate import runs_root
+    root = runs_root(args.runs)
+    rows = []
+    for path in sorted(_glob.glob(os.path.join(root, "*", "events.jsonl"))):
+        eid = os.path.basename(os.path.dirname(path))
+        try:
+            with open(path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                    except ValueError:
+                        continue
+                    ev["experiment_id"] = ev.get("experiment_id", eid)
+                    rows.append(ev)
+        except OSError:
+            continue
+    rows.sort(key=lambda e: e.get("timestamp", 0))
+    last = int(args.last)
+    print(json.dumps({"status": "OK", "runs_root": root,
+                      "events": rows[-last:]}, indent=2, default=str))
+    return 0
+
+
+def _cmd_interactive(args) -> int:
+    """Launch the terminal control center (also the bare `aurix` command)."""
+    import time as _time
+    from .orchestrate import runs_root
+    from .state import build_state
+    from .tui import run_interactive
+    root = runs_root(args.runs)
+
+    def build():
+        return build_state(root, int(_time.time() * 1000))
+
+    def events():
+        rows = []
+        import glob as _glob
+        for path in sorted(_glob.glob(os.path.join(root, "*", "events.jsonl"))):
+            try:
+                with open(path) as f:
+                    rows.extend(json.loads(l) for l in f if l.strip())
+            except (OSError, ValueError):
+                continue
+        rows.sort(key=lambda e: e.get("timestamp", 0))
+        return rows
+
+    def system():
+        from .resources import detect_resources
+        return detect_resources().__dict__
+
+    def counts():
+        from .orchestrate import ExperimentRegistry
+        exps = ExperimentRegistry(root).exps.values()
+        return {"running": sum(1 for e in exps if e["status"] == "RUNNING"),
+                "queued": sum(1 for e in exps if e["status"] == "QUEUED"),
+                "done": sum(1 for e in exps if e["status"] in
+                            ("VALIDATED", "REJECTED", "FAILED", "CANCELLED", "PROMOTED"))}
+
+    def start():
+        import argparse as _ap
+        ns = _ap.Namespace(runs=args.runs, datasets=None, interval=30, once=False)
+        return _cmd_auto_train(ns)
+
+    def stop():
+        return _auto_stop_inner(root, 300)
+
+    return run_interactive(build, {"start": start, "stop": stop,
+                                  "events": events, "system": system,
+                                  "counts": counts})
 
 
 def _spawn_supervisor(root: str, interval: int) -> int:
@@ -597,10 +705,14 @@ def _cmd_auto_train(args) -> int:
                           "next": "workers continue independently; use auto-status"},
                          indent=2, default=str))
         return 0
-    pid, fresh = _ensure_supervisor(os.path.abspath(root), args.interval)
+    return _auto_train_supervised(root, submitted, args.interval)
+
+
+def _auto_train_supervised(root: str, submitted: list, interval: int) -> int:
+    pid, fresh = _ensure_supervisor(os.path.abspath(root), interval)
     print(json.dumps({"status": "OK", "mode": "supervised", "runs_root": root,
                       "submitted": submitted, "supervisor_pid": pid,
-                      "supervisor": "reused" if not fresh else "started",
+                      "supervisor": "started" if fresh else "reused",
                       "message": "automated training started; workers continue independently"},
                      indent=2))
     return 0
@@ -662,6 +774,9 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("auto-cycle"); s.add_argument("--runs", default=None); s.add_argument("--detach", action="store_true"); s.set_defaults(fn=_cmd_auto_cycle)
     s = sub.add_parser("auto-status"); s.add_argument("--runs", default=None); s.add_argument("--concise", action="store_true"); s.set_defaults(fn=_cmd_auto_status)
     s = sub.add_parser("auto-stop"); s.add_argument("--runs", default=None); s.add_argument("--timeout", type=int, default=300); s.set_defaults(fn=_cmd_auto_stop)
+    s = sub.add_parser("auto-state"); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_auto_state)
+    s = sub.add_parser("auto-logs"); s.add_argument("--runs", default=None); s.add_argument("--last", type=int, default=50); s.set_defaults(fn=_cmd_auto_logs)
+    s = sub.add_parser("interactive"); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_interactive)
     s = sub.add_parser("auto-start"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_start)
     s = sub.add_parser("auto-supervise"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_supervise)
     s = sub.add_parser("auto-worker"); s.add_argument("--exp-dir", required=True); s.add_argument("--resume", action="store_true"); s.set_defaults(fn=_cmd_auto_worker)

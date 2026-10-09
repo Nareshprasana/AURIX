@@ -293,6 +293,14 @@ class Scheduler:
             eid = exp["experiment_id"]
             edir = self._exp_dir(eid)
             hb = read_heartbeat(edir)
+            if hb is not None and hb.get("status") == "failed":
+                self.reg.transition(eid, "FAILED",
+                                    f"worker failed: {hb.get('error', 'unknown')}")
+                emit_event(edir, eid, "training.failed",
+                           {"error": hb.get("error"), "epoch": hb.get("epoch"),
+                            "checkpoint": hb.get("checkpoint")})
+                acted.append((eid, "failed"))
+                continue
             # Grace period: a freshly spawned worker needs time for its first
             # heartbeat. Reaping too early would spawn a DUPLICATE worker.
             age_s = (utc_ms() - (exp.get("started_at") or utc_ms())) / 1000
@@ -420,11 +428,13 @@ class Scheduler:
     def cycle(self, detach: bool = False, gates: dict | None = None) -> dict:
         if stop_requested(self.root):
             return {"started": [], "reaped": [], "evaluated": [], "governed": [],
-                    "stopped": True}
+                    "stalled": None, "stopped": True}
+        from .state import detect_and_record_stall
         out = {"started": self.start_eligible(detach=detach),
                "reaped": self.reap(detach=detach),
                "evaluated": self.evaluate_eligible(),
-               "governed": self.govern_eligible(gates or {})}
+               "governed": self.govern_eligible(gates or {}),
+               "stalled": detect_and_record_stall(self.root)}
         return out
 
     def revive_stopped(self, detach: bool = False) -> list:

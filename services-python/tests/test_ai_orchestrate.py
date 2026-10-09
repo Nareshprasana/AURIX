@@ -200,3 +200,22 @@ def test_runs_root_override_and_events(tmp_path):
     assert row["type"] == "EXPERIMENT_QUEUED" and row["code_version"]
     assert pid_alive(os.getpid()) is True
     assert pid_alive(99999999) is False
+
+
+def test_failed_heartbeat_marks_failed_with_diagnostic(tmp_path):
+    reg_root = str(tmp_path)
+    ds = _seed_dataset(tmp_path)
+    s = _sched(reg_root)
+    rec = s.reg.submit(_def(ds))
+    eid, edir = rec["experiment_id"], os.path.join(reg_root, rec["experiment_id"])
+    s.reg.transition(eid, "RUNNING", "test")
+    with open(os.path.join(edir, "heartbeat.json"), "w") as f:
+        json.dump({"pid": 424242, "ts": 1, "epoch": 1,
+                   "checkpoint": "checkpoint-0001.npz", "status": "failed",
+                   "error": "boom"}, f)
+    assert s.reap() == [(eid, "failed")]
+    assert s.reg.get(eid)["status"] == "FAILED"
+    from aurix_ai.state import build_state
+    import time
+    st = build_state(reg_root, int(time.time() * 1000))
+    assert st["health"] == "FAILED" and "boom" in (st["error"] or "")

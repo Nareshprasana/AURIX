@@ -94,3 +94,68 @@ experiment-result OBSERVATION to `knowledge_refs.jsonl`.
 `max_concurrent_training: 1`, CPU selected via existing resource detection
 (torch CPU-only build; GPU presence never implies CUDA). Stale heartbeats
 (>600 s) or dead workers trigger checkpoint resume, never blind restart.
+
+## Authoritative state (`auto-state`)
+
+`TrainingState` (`services-python/aurix_ai/state.py`) is the single source of
+truth for the terminal UI, `auto-status`, `aurix train status`, and the future
+web frontend — all read the same persisted supervisor/worker state, none keeps
+its own. Fields: state, experiment_id, dataset_id, stage, worker
+(name/pid/state), epoch/total_epochs, loss, validation_loss, progress,
+started_at, updated_at, elapsed_seconds, heartbeat_age_seconds, checkpoint,
+last_event, health (IDLE/STARTING/RUNNING/STALLED/FAILED/STOPPING/STOPPED/
+COMPLETED), error, stdout/stderr references (+ log tail), backtest run record,
+recovery_state, per-stage pipeline (dataset/training/evaluation/backtest/
+governance/registry as PENDING/RUNNING/PASSED/FAILED/BLOCKED), code_version.
+No broker credentials, no risk/execution data, no training logic inside.
+
+## Events (single mechanism: `events.jsonl` per run)
+
+Legacy UPPER_SNAKE names (`TRAINING_STARTED`, `CHECKPOINT_CREATED`,
+`TRAINING_COMPLETED`, `TRAINING_FAILED`, `EVALUATION_*`, `BACKTEST_*`,
+`GOVERNANCE_REJECTED`, `MODEL_VALIDATED`, `EXPERIMENT_QUEUED`) plus new dotted
+names (`training.stalled`, `training.stopped`, `training.stop_requested`,
+`training.failed`). Same file, same schema (timestamp, type, experiment ID,
+worker PID, status/error, checkpoint refs) — one system, documented eras.
+Stall detection runs every scheduler cycle (stale heartbeat, dead worker, no
+epoch progress) and records `training.stalled` once per epoch; nothing is
+killed. Subprocess runs persist full records (`backtest-run.json`: stdout —
+or explicit `EMPTY` — stderr, exit code, start/end times, stage, experiment,
+worker PID); empty diagnostics are recorded, never discarded.
+
+## Future frontend (not built)
+
+```text
+                 AURIX Supervisor
+                       │
+                Training State (auto-state JSON)
+                       │
+             ┌─────────┴─────────┐
+             │                   │
+       Terminal UI          Web Frontend (control/visualization only)
+             │                   │
+             └─────────┬─────────┘
+                       │
+              Training Worker
+```
+
+Minimal backend mapping (no new server, no new database):
+
+```text
+GET  training status      → auto-state
+GET  training events/logs → auto-logs
+POST start training       → auto-train
+POST stop training        → auto-stop
+GET  current experiment   → auto-state.experiment_id + stage
+GET  checkpoint state     → auto-state.checkpoint + heartbeat
+GET  training history     → registry.json + per-run events
+```
+
+The frontend must remain a control/visualization layer only: no training,
+risk, promotion, broker, checkpoint, or governance logic. Planned views:
+training (experiment/dataset/worker/PID/epochs/losses/checkpoint/elapsed),
+pipeline (per-stage PENDING/RUNNING/PASSED/FAILED/BLOCKED), live logs
+(timestamp/stage/event/message/error/stdout/stderr), failure panel (stage,
+worker, exit code, exception, stdout/stderr, checkpoint, recovery), history
+(past experiments + outcomes). Isolation invariants hold: UI and worker never
+touch broker credentials or risk/execution controls; training ≠ live trading.

@@ -53,7 +53,7 @@ def test_ai_layer_has_no_broker_surface():
     for fn in os.listdir(root):
         if not fn.endswith(".py"):
             continue
-        src = open(os.path.join(root, fn)).read()
+        src = open(os.path.join(root, fn), encoding="utf-8").read()
         for pat in ("placeOrder", "BrokerPort", "broker-sim", "broker-kite",
                     "kiteconnect", "api_secret", "access_token", "execution-service",
                     "order-safety-gate", "risk-engine"):

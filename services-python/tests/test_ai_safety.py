@@ -41,7 +41,7 @@ def test_no_recursive_delete_of_data_roots_in_code():
     for fn in sorted(os.listdir(root)):
         if not fn.endswith(".py"):
             continue
-        src = open(os.path.join(root, fn)).read()
+        src = open(os.path.join(root, fn), encoding="utf-8").read()
         # shutil.which (CLI lookup) is read-only and allowed; anything that
         # deletes/moves trees is forbidden.
         for pat in ("shutil.rmtree", "shutil.move", "shutil.copytree"):
@@ -76,7 +76,8 @@ def test_existing_run_dir_is_immutable(tmp_path):
                   launcher=lambda d, r, detach=False: (_ for _ in ()).throw(
                       AssertionError("no worker may start without queued work")))
     out = s.cycle()
-    assert out == {"started": [], "reaped": [], "evaluated": [], "governed": []}
+    assert out == {"started": [], "reaped": [], "evaluated": [], "governed": [],
+                    "stalled": None}
     assert json.load(open(sentinel)) == {"run_id": "real-nse-001"}
     assert "exp-historical" not in ExperimentRegistry(root).exps
 
