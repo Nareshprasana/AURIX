@@ -63,13 +63,17 @@ never reused.
 ## Lifecycle
 
 `QUEUED → RUNNING → COMPLETED → EVALUATED → VALIDATED | REJECTED`
-(`FAILED`/`CANCELLED` terminal). Workers are independent processes
+(`FAILED`/`CANCELLED` terminal; `STOPPED` resumable). Workers are independent processes
 (`auto-worker`) writing only `data/runs/<exp-id>/`, heartbeating every 5 s
-(`heartbeat.json`: pid/epoch/checkpoint/ts). The scheduler never deletes run
+(`heartbeat.json`: pid/spawn-time/epoch/checkpoint/ts). The scheduler never deletes run
 directories — recovery is resume-from-checkpoint or clean restart, both recorded.
 
 A freshly spawned worker gets a 120 s heartbeat grace period so the scheduler
-can never double-spawn a duplicate worker (regression-tested).
+can never double-spawn a duplicate worker (regression-tested). Recovery
+launches are capped: 3 attempts without epoch progress mark the experiment
+FAILED with diagnostics instead of looping forever. Later `aurix train` calls
+revive STOPPED experiments from preserved checkpoints before submitting
+anything new, so restarts continue work rather than duplicating it.
 
 ## Gates (deterministic, `config/ai-policy.v1.yaml → automation`)
 
@@ -79,9 +83,20 @@ can never double-spawn a duplicate worker (regression-tested).
    missing bars ⇒ gate missing ⇒ no promotion). Accuracy ≠ profitability.
 4. Governance: edge over baseline ≥ `min_oos_edge_vs_baseline` (0.01) AND
    backtest ok AND drawdown ≤ cap ⇒ model registered CANDIDATE → promoted
-   **VALIDATED** only. Otherwise REJECTED. PAPER and beyond stay operator-only.
+   **VALIDATED** only. Otherwise REJECTED. A broken backtest gate (crash,
+   empty output) is an infrastructure FAILED, never a governance verdict;
+   `auto-retry` can requeue FAILED experiments (max 3 attempts, checkpoints
+   reused; REJECTED verdicts are never retried). PAPER and beyond stay
+   operator-only.
    Walk-forward/stress: not yet automated — recorded as missing gates, and
    promotion stops at VALIDATED.
+
+Supervisor liveness uses a per-cycle heartbeat file, not the pidfile alone:
+a live PID with a stale/missing heartbeat is superseded (stale locks can
+never block a healthy restart), and heartbeats carry process spawn times so
+PID reuse cannot impersonate a worker. The TUI surfaces start/stop errors
+inline instead of exiting. Worker stdout and stderr persist to separate
+`worker-stdout.log` / `worker-stderr.log` files referenced by TrainingState.
 
 LLM (Qwen) may only supply a validated JSON proposal (`auto-suggest
 --llm-json`); deterministic seed-variants work offline. Laya is not in the

@@ -157,6 +157,28 @@ class ExperimentRegistry:
     def get(self, eid: str) -> dict | None:
         return self.exps.get(eid)
 
+    def requeue(self, eid: str, reason: str, max_retries: int = 3) -> dict:
+        """Return a FAILED experiment to QUEUED for another attempt. History
+        is appended, never rewritten; checkpoints/artifacts are preserved and
+        reused. REJECTED (a valid governance verdict) can never be requeued.
+        Raises when the retry budget is exhausted."""
+        rec = self.exps.get(eid)
+        if rec is None:
+            raise fail("INVALID_CONFIG", f"unknown experiment: {eid}")
+        if rec["status"] != "FAILED":
+            raise fail("INVALID_CONFIG",
+                       f"only FAILED experiments can be requeued (state={rec['status']})")
+        attempts = sum(1 for h in rec.get("history", []) if h.get("to") == "QUEUED")
+        if attempts >= max_retries:
+            raise fail("INVALID_CONFIG", f"retry budget exhausted ({max_retries})")
+        rec["status"] = "QUEUED"
+        rec["completed_at"] = None
+        rec["history"].append({"to": "QUEUED", "at": utc_ms(), "reason": reason})
+        with open(os.path.join(self.root, eid, "experiment.json"), "w") as f:
+            json.dump(rec, f, indent=2, sort_keys=True)
+        self._save()
+        return rec
+
     def running(self) -> list:
         return [e for e in self.exps.values() if e["status"] == "RUNNING"]
 
@@ -210,6 +232,51 @@ def pid_alive(pid: int) -> bool:
         return False
 
 
+def process_start_ms(pid: int) -> int | None:
+    """Process creation time (ms since epoch) or None when unavailable.
+    Used to defeat PID reuse: a heartbeat is only trusted when its recorded
+    spawn time matches the live process. Windows-only; None elsewhere."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if os.name != "nt":
+        return None
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f"(Get-Process -Id {pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()"],
+            capture_output=True, text=True, timeout=20)
+        return int(r.stdout.strip().splitlines()[-1])
+    except Exception:
+        return None
+
+
+def heartbeat_trusted(hb: dict | None, skew_ms: int = 120_000) -> bool:
+    """A heartbeat is trusted only if its PID is alive AND (when both times
+    are available) the live process started around when the worker recorded
+    its own spawn. Defeats PID reuse without assuming PID identity."""
+    if not hb:
+        return False
+    try:
+        pid = int(hb.get("pid", -1))
+    except (TypeError, ValueError):
+        return False
+    if not pid_alive(pid):
+        return False
+    spawned = hb.get("spawned_at")
+    if spawned is None:
+        return True
+    started = process_start_ms(pid)
+    if started is None:
+        return True
+    try:
+        wmi_epoch_offset = 11644473600000
+        return abs(int(started / 10000) - wmi_epoch_offset - int(spawned)) <= skew_ms
+    except (TypeError, ValueError):
+        return True
+
+
 def latest_checkpoint(exp_dir: str) -> str | None:
     ckpts = sorted(glob.glob(os.path.join(exp_dir, "checkpoints", "*.npz")))
     return ckpts[-1] if ckpts else None
@@ -239,15 +306,26 @@ def clear_stop(root: str) -> None:
 
 
 def default_launcher(exp_dir: str, resume: bool, detach: bool = False) -> subprocess.Popen:
-    """Spawn the worker as an independent process (existing CLI, existing code)."""
+    """Spawn the worker as an independent process (existing CLI, existing code).
+
+    stdout and stderr are captured to SEPARATE persisted files so a failure
+    with empty stdout still leaves stderr (and vice versa); both paths are
+    reported in TrainingState. Never raises for a spawn failure — callers
+    surface it; a failed spawn must be visible, not silent."""
     cmd = [sys.executable, "-m", "aurix_ai.cli", "auto-worker",
            "--exp-dir", exp_dir] + (["--resume"] if resume else [])
     svc_dir = os.path.join(repo_root(), "services-python")
     flags = 0
     if detach and os.name == "nt":
         flags = 0x00000008 | 0x00000200 | windows_hidden_flags()  # detached, own group, no window
-    return subprocess.Popen(cmd, cwd=svc_dir, stdout=open(os.path.join(exp_dir, "worker.log"), "ab"),
-                            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+    out = open(os.path.join(exp_dir, "worker-stdout.log"), "ab")
+    try:
+        err = open(os.path.join(exp_dir, "worker-stderr.log"), "ab")
+    except OSError:
+        out.close()
+        raise
+    return subprocess.Popen(cmd, cwd=svc_dir, stdout=out, stderr=err,
+                            stdin=subprocess.DEVNULL,
                             start_new_session=(os.name != "nt"), creationflags=flags)
 
 
@@ -286,6 +364,29 @@ class Scheduler:
             started.append(eid)
         return started
 
+    def _recovery_allowed(self, edir: str, hb: dict | None) -> bool:
+        """Cap blind restarts: at most 3 recovery launches without epoch
+        progress, then FAIL with diagnostics instead of looping forever.
+        Progress resets the budget. State lives in the exp dir (survives
+        scheduler restarts); checkpoints are never touched."""
+        path = os.path.join(edir, "recovery.json")
+        try:
+            rec = json.load(open(path)) if os.path.exists(path) else {}
+        except (OSError, ValueError):
+            rec = {}
+        epoch = (hb or {}).get("epoch", 0) or 0
+        if epoch != rec.get("last_epoch", -1):
+            rec = {"attempts": 0, "last_epoch": epoch}
+        if rec.get("attempts", 0) >= 3:
+            return False
+        rec["attempts"] = rec.get("attempts", 0) + 1
+        try:
+            with open(path, "w") as f:
+                json.dump(rec, f)
+        except OSError:
+            return False
+        return True
+
     # -- stage 2: reap / recover -------------------------------------------
     def reap(self, detach: bool = False) -> list:
         acted = []
@@ -311,11 +412,24 @@ class Scheduler:
                 self.reg.transition(eid, "COMPLETED", "worker reported done")
                 emit_event(edir, eid, "TRAINING_COMPLETED",
                            {"epochs": hb.get("epoch", 0)})
+                try:
+                    os.remove(os.path.join(edir, "recovery.json"))
+                except OSError:
+                    pass
                 acted.append((eid, "completed"))
                 continue
             stale = (hb is None or (utc_ms() - hb.get("ts", 0)) > self.heartbeat_timeout_s * 1000)
-            dead = (hb is not None and not pid_alive(int(hb.get("pid", -1))))
+            dead = (hb is None) or not heartbeat_trusted(hb)
             if stale or dead:
+                if not self._recovery_allowed(edir, hb):
+                    self.reg.transition(eid, "FAILED",
+                                        "worker failed to progress after repeated recovery attempts")
+                    emit_event(edir, eid, "training.failed",
+                               {"reason": "recovery budget exhausted",
+                                "epoch": (hb or {}).get("epoch"),
+                                "checkpoint": (hb or {}).get("checkpoint")})
+                    acted.append((eid, "failed"))
+                    continue
                 ckpt = latest_checkpoint(edir)
                 if ckpt:
                     emit_event(edir, eid, "TRAINING_RESUMED",
@@ -380,13 +494,20 @@ class Scheduler:
             try:
                 bt = self.backtest_runner(bars_path, edir)
             except Exception as e:
-                bt = {"ok": False, "reason": f"runner error: {e}"}
+                bt = {"ok": False, "infra_error": True,
+                      "reason": f"runner error: {e}"}
         else:
             bt = {"ok": False, "reason": "no backtest bars provided; gate missing"}
         with open(os.path.join(edir, "backtest.json"), "w") as f:
             json.dump(bt, f, indent=2, sort_keys=True)
         emit_event(edir, eid, "BACKTEST_COMPLETED", {"ok": bool(bt.get("ok"))})
         max_dd = float(gates.get("max_backtest_drawdown_pct", 10.0))
+        if bt.get("infra_error"):
+            # The gate itself broke (crash/empty output) — that is an
+            # infrastructure failure, NOT a governance rejection. Fail so it
+            # stays retryable; never launder it into a model verdict.
+            raise fail("BACKTEST_FAILED",
+                       f"backtest infrastructure failure: {bt.get('reason')}")
         bt_ok = bool(bt.get("ok")) and float(bt.get("max_drawdown_pct", 100.0)) <= max_dd
         decision = {"edge": edge, "min_edge": min_edge, "backtest_ok": bt_ok,
                     "backtest": bt}

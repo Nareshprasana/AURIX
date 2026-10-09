@@ -49,11 +49,12 @@ def test_no_recursive_delete_of_data_roots_in_code():
                 hits.append(f"{fn}::{pat}")
     assert hits == []
     for mod in ("orchestrate.py", "worker.py"):
-        src = open(os.path.join(root, mod)).read()
-        # Single exception: the stop.requested control flag (not data).
+        src = open(os.path.join(root, mod), encoding="utf-8").read()
+        # Narrow exception: scheduler-owned control flags only (stop marker,
+        # recovery budget). Never datasets, runs, checkpoints, or artifacts.
         for i, line in enumerate(src.split("\n")):
             if "os.remove(" in line:
-                assert "stop.requested" in line, f"{mod}:{i + 1}"
+                assert ("stop.requested" in line or "recovery.json" in line), f"{mod}:{i + 1}"
         assert "unlink(" not in src, mod
         assert "rmtree" not in src, mod
     scripts = os.path.join(REPO, "scripts")

@@ -28,7 +28,7 @@ def _last_outcome_line(state: dict) -> str | None:
     return f"Last: {lo['outcome']} {lo['experiment_id']}{err} (see [4] Logs)"
 
 
-def render_menu(state: dict) -> str:
+def render_menu(state: dict, notice: str | None = None) -> str:
     health = state.get("health", "IDLE")
     training_dot = "●" if health in ("RUNNING", "STARTING", "STOPPING") else \
         ("●" if health in ("FAILED", "STALLED") else "○")
@@ -42,6 +42,8 @@ def render_menu(state: dict) -> str:
         # Idle service with history: show IDLE (never a stale FAILED) while
         # keeping the historical outcome visible, diagnostics via logs menu.
         lines += ["", last]
+    if notice:
+        lines += ["", f"! {notice}"]
     lines += ["",
               "What do you want to do?",
               "",
@@ -219,20 +221,35 @@ def run_interactive(build_state, actions, interval_s: float = 2.0) -> int:
         print(json.dumps(build_state(), indent=2, default=str))
         return 0
     view = "menu"
+    notice = None
     while True:
-        state = build_state()
+        try:
+            state = build_state()
+        except Exception as e:
+            state = {"health": "IDLE", "experiment_id": None, "pipeline": [],
+                     "last_outcome": None}
+            notice = f"state unreadable: {e}"
         clear()
         if view == "menu":
-            sys.stdout.write(render_menu(state))
+            sys.stdout.write(render_menu(state, notice))
+            notice = None
             sys.stdout.flush()
             key = read_key(30.0)
             if key == "1":
-                actions["start"]()
+                try:
+                    actions["start"]()
+                except Exception as e:
+                    # Never kill the control center: surface the failure and
+                    # stay in the menu with the diagnostic visible.
+                    notice = f"start failed: {e}"
                 view = "training"
             elif key == "2":
                 view = "training"
             elif key == "3":
-                actions["stop"]()
+                try:
+                    actions["stop"]()
+                except Exception as e:
+                    notice = f"stop failed: {e}"
                 view = "training"
             elif key == "4":
                 view = "logs"
@@ -245,7 +262,11 @@ def run_interactive(build_state, actions, interval_s: float = 2.0) -> int:
             sys.stdout.flush()
             key = read_key(interval_s)
             if key == "s":
-                actions["stop"]()
+                try:
+                    actions["stop"]()
+                except Exception as e:
+                    notice = f"stop failed: {e}"
+                    view = "menu"
             elif key == "l":
                 view = "logs"
             elif key in ("b",):

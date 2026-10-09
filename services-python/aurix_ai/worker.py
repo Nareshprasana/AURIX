@@ -33,12 +33,14 @@ def _latest_ckpt(exp_dir: str) -> str | None:
     return os.path.basename(ckpts[-1]) if ckpts else None
 
 
-def heartbeat_loop(exp_dir: str, exp_id: str, stop: threading.Event, mode: str):
+def heartbeat_loop(exp_dir: str, exp_id: str, stop: threading.Event, mode: str,
+                   spawned_at: int):
     path = os.path.join(exp_dir, "heartbeat.json")
     while not stop.wait(5):
         try:
             with open(path, "w") as f:
                 json.dump({"pid": os.getpid(), "ts": utc_ms(),
+                           "spawned_at": spawned_at,
                            "epoch": _epoch_from_metrics(exp_dir),
                            "checkpoint": _latest_ckpt(exp_dir),
                            "status": "running", "mode": mode}, f)
@@ -55,8 +57,10 @@ def run_worker(exp_dir: str, resume: bool = False) -> int:
     eid = exp["experiment_id"]
     defn = exp["definition"]
     stop = threading.Event()
+    spawned_at = utc_ms()
     t = threading.Thread(target=heartbeat_loop, args=(exp_dir, eid, stop,
-                                                     "resume" if resume else "fresh"),
+                                                     "resume" if resume else "fresh",
+                                                     spawned_at),
                          daemon=True)
     t.start()
     failed = None
@@ -97,6 +101,7 @@ def run_worker(exp_dir: str, resume: bool = False) -> int:
             if os.path.exists(hb_path):
                 hb = json.load(open(hb_path))
             hb.update({"pid": os.getpid(), "ts": utc_ms(),
+                       "spawned_at": spawned_at,
                        "epoch": _epoch_from_metrics(exp_dir),
                        "checkpoint": _latest_ckpt(exp_dir),
                        "status": "failed" if failed else "done"})

@@ -209,7 +209,8 @@ def build_state(runs_root: str, now_ms: int, stall_after_s: int = 600) -> dict:
                       "state": "RUNNING",
                       "note": "short-lived subprocess; see backtest-run.json"}
     progress = (epoch / total) if isinstance(epoch, (int, float)) and total else None
-    log_path = os.path.join(edir, "worker.log")
+    out_path = os.path.join(edir, "worker-stdout.log")
+    err_path = os.path.join(edir, "worker-stderr.log")
     state = {
         "state": status, "experiment_id": eid,
         "dataset_id": exp.get("dataset_version") or exp["definition"].get("dataset_dir"),
@@ -225,8 +226,8 @@ def build_state(runs_root: str, now_ms: int, stall_after_s: int = 600) -> dict:
         "elapsed_seconds": elapsed, "heartbeat_age_seconds": hb_age,
         "checkpoint": hb.get("checkpoint"),
         "last_event": last_event, "health": health, "error": error,
-        "stdout_reference": log_path, "stderr_reference": log_path,
-        "log_tail": _tail_lines(log_path),
+        "stdout_reference": out_path, "stderr_reference": err_path,
+        "log_tail": _tail_lines(out_path),
         "backtest_run": bt_run or None,
         "recovery_state": recovery,
         "pipeline": pipeline_for(edir, status),

@@ -324,6 +324,7 @@ def _node_backtest_runner(bars_path: str, exp_dir: str) -> dict:
         record["ok"] = bool(record.get("ok"))
     except Exception as e:
         record.update({"ended_at": int(_time.time() * 1000), "ok": False,
+                       "infra_error": True,
                        "reason": f"backtest runner failed: {e}",
                        "stderr": record.get("stderr") or "EMPTY",
                        "stdout": record.get("stdout") or "EMPTY"})
@@ -333,7 +334,7 @@ def _node_backtest_runner(bars_path: str, exp_dir: str) -> dict:
     except OSError:
         pass
     return {k: v for k, v in record.items()
-            if k in ("ok", "status", "orders", "fills", "trades", "signals",
+            if k in ("ok", "infra_error", "status", "orders", "fills", "trades", "signals",
                      "max_drawdown_pct", "total_return", "limitations", "reason")}
 
 
@@ -596,16 +597,29 @@ def _spawn_supervisor(root: str, interval: int) -> int:
 
 
 def _ensure_supervisor(root: str, interval: int) -> tuple:
-    """Start the supervisor unless one is already alive. Returns (pid, fresh)."""
+    """Start the supervisor unless a live one owns this root. A pidfile PID is
+    trusted only when it is alive AND its heartbeat is fresh — this defeats
+    both stale locks (dead supervisor blocking restart) and PID reuse.
+    Returns (pid, fresh)."""
     from .orchestrate import pid_alive
     os.makedirs(root, exist_ok=True)
     pidfile = os.path.join(root, "supervisor.pid")
+    hbfile = os.path.join(root, "supervisor-heartbeat.json")
     if os.path.exists(pidfile):
         try:
             old = int(open(pidfile).read().strip())
         except (ValueError, OSError):
             old = None
-        if old and pid_alive(old):
+        hb = None
+        try:
+            if os.path.exists(hbfile):
+                hb = json.load(open(hbfile))
+        except (OSError, ValueError):
+            hb = None
+        import time as _time
+        fresh = (hb is not None and hb.get("pid") == old and
+                 (int(_time.time() * 1000) - hb.get("ts", 0)) < max(120_000, 3 * interval * 1000))
+        if old and pid_alive(old) and fresh:
             return old, False
     return _spawn_supervisor(root, interval), True
 
@@ -673,10 +687,14 @@ def _cmd_auto_train(args) -> int:
     root = runs_root(args.runs)
     from .orchestrate import clear_stop
     clear_stop(root)  # explicit user start: lift any prior stop request
-    reg = ExperimentRegistry(root)
+    sched, gates = _load_gates()
+    from .orchestrate import Scheduler
+    s = Scheduler(root, sched, backtest_runner=_node_backtest_runner)
+    revived = [eid for eid, _ in s.revive_stopped(detach=True)]
+    reg = s.reg
     active = [e for e in reg.exps.values() if e["status"] in ("QUEUED", "RUNNING")]
     submitted = []
-    if not active:
+    if not active and not revived:
         ddir, manifest = _discover_default_dataset(args.datasets)
         budget = int(auto.get("max_experiments_per_cycle", 3))
         epochs = int(auto.get("default_epochs", 5))
@@ -702,9 +720,6 @@ def _cmd_auto_train(args) -> int:
             except Exception:
                 pass  # existing ID: immutable history, never resubmitted
     if args.once:
-        sched, gates = _load_gates()
-        s = Scheduler(root, sched, backtest_runner=_node_backtest_runner)
-        revived = s.revive_stopped(detach=True)
         cycle = s.cycle(detach=True)
         cycle["revived"] = revived
         print(json.dumps({"status": "OK", "mode": "once", "runs_root": root,
@@ -712,6 +727,8 @@ def _cmd_auto_train(args) -> int:
                           "next": "workers continue independently; use auto-status"},
                          indent=2, default=str))
         return 0
+    if revived:
+        submitted = revived + submitted
     return _auto_train_supervised(root, submitted, args.interval)
 
 
@@ -730,11 +747,15 @@ def _cmd_auto_supervise(args) -> int:
     from .orchestrate import Scheduler, runs_root, stop_requested
     sched, gates = _load_gates()
     root = runs_root(args.runs)
+    started_at = int(_time.time() * 1000)
     s = Scheduler(root, sched, backtest_runner=_node_backtest_runner)
     while True:
         if stop_requested(root):
             break  # graceful supervisor exit: no new work after a stop
         try:
+            with open(os.path.join(root, "supervisor-heartbeat.json"), "w") as f:
+                json.dump({"pid": os.getpid(), "ts": int(_time.time() * 1000),
+                           "started_at": started_at}, f)
             s.cycle(detach=True)
         except Exception as e:
             with open(os.path.join(s.root, "supervisor-errors.log"), "a") as f:
@@ -745,6 +766,33 @@ def _cmd_auto_supervise(args) -> int:
 def _cmd_auto_worker(args) -> int:
     from .worker import run_worker
     raise SystemExit(run_worker(args.exp_dir, resume=args.resume))
+
+
+def _cmd_auto_retry(args) -> int:
+    """Requeue a FAILED experiment (infra failure only, never a governance
+    REJECTED verdict) for another attempt. Capped so automation cannot loop
+    forever; checkpoints are preserved and reused."""
+    from .orchestrate import ExperimentRegistry, emit_event, runs_root
+    root = runs_root(args.runs)
+    reg = ExperimentRegistry(root)
+    rec = reg.get(args.exp)
+    if rec is None:
+        print(json.dumps({"status": "FAILED", "error": f"unknown experiment: {args.exp}"}))
+        return 1
+    if rec["status"] != "FAILED":
+        print(json.dumps({"status": "FAILED",
+                          "error": f"only FAILED experiments can be retried (state={rec['status']})"}))
+        return 1
+    try:
+        rec = reg.requeue(args.exp, "operator retry of infra failure")
+    except Exception as e:
+        print(json.dumps({"status": "FAILED", "error": str(e)}))
+        return 1
+    attempt = sum(1 for h in rec.get("history", []) if h.get("to") == "QUEUED")
+    emit_event(os.path.join(root, args.exp), args.exp, "training.retry_queued",
+               {"attempt": attempt})
+    print(json.dumps({"status": "OK", "experiment": args.exp, "attempt": attempt}))
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -787,6 +835,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("auto-start"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_start)
     s = sub.add_parser("auto-supervise"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_supervise)
     s = sub.add_parser("auto-worker"); s.add_argument("--exp-dir", required=True); s.add_argument("--resume", action="store_true"); s.set_defaults(fn=_cmd_auto_worker)
+    s = sub.add_parser("auto-retry"); s.add_argument("--exp", required=True); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_auto_retry)
     s = sub.add_parser("auto-train"); s.add_argument("--runs", default=None); s.add_argument("--datasets", default=None); s.add_argument("--interval", type=int, default=30); s.add_argument("--once", action="store_true"); s.set_defaults(fn=_cmd_auto_train)
     return p
 

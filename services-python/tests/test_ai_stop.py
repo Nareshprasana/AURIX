@@ -122,12 +122,16 @@ def test_hidden_process_flags(tmp_path):
 
 
 def test_supervisor_start_refuses_duplicate(tmp_path):
+    import time
     from unittest import mock
     import aurix_ai.cli as cli
     root = os.path.join(str(tmp_path), "runs")
     os.makedirs(root)
     with open(os.path.join(root, "supervisor.pid"), "w") as f:
         f.write(str(os.getpid()))  # a live pid: our own test process
+    with open(os.path.join(root, "supervisor-heartbeat.json"), "w") as f:
+        json.dump({"pid": os.getpid(), "ts": int(time.time() * 1000),
+                   "started_at": 1}, f)
     with mock.patch.object(cli, "_spawn_supervisor") as spawn:
         pid, fresh = cli._ensure_supervisor(root, 30)
     assert (pid, fresh) == (os.getpid(), False)
