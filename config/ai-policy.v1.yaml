@@ -66,3 +66,6 @@ automation:
   # Optional override for `aurix train` dataset discovery; when absent the
   # newest valid versioned dataset under data/datasets is used.
   # default_dataset_dir: null
+  # Autonomous research bounds (Phase 1 research agent).
+  research_max_total: 12
+  research_max_per_cycle: 3

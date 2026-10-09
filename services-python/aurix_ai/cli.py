@@ -795,6 +795,41 @@ def _cmd_auto_retry(args) -> int:
     return 0
 
 
+def _cmd_research_cycle(args) -> int:
+    """One bounded autonomous research cycle: read outcomes -> question ->
+    hypothesize -> validate -> submit (unless --dry-run). Trains nothing
+    itself; the supervisor executes submitted experiments."""
+    import yaml
+    from .orchestrate import runs_root
+    from .research import run_cycle
+    policy = {}
+    for cand in ("config/ai-policy.v1.yaml", "../config/ai-policy.v1.yaml"):
+        if os.path.exists(cand):
+            with open(cand) as f:
+                policy = yaml.safe_load(f) or {}
+            break
+    auto = dict(policy.get("automation", {}) or {})
+    auto["market_ml"] = policy.get("market_ml", {})
+    root = runs_root(args.runs)
+    llm_json = None
+    if args.llm_json:
+        llm_json = json.load(open(args.llm_json))
+    dsarg = args.datasets
+    if dsarg and os.path.isdir(dsarg) and not os.path.exists(os.path.join(dsarg, "manifest.json")):
+        dsarg = [os.path.join(dsarg, n) for n in sorted(os.listdir(dsarg))
+                 if os.path.isdir(os.path.join(dsarg, n))
+                 and os.path.exists(os.path.join(dsarg, n, "manifest.json"))]
+    elif dsarg:
+        dsarg = [dsarg]
+    else:
+        dsarg = []
+    plan = run_cycle(root, dsarg, auto,
+                     llm_json=llm_json, dry_run=args.dry_run)
+    print(json.dumps({"status": "OK", "runs_root": root, "plan": plan},
+                     indent=2, default=str))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aurix-train")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -836,6 +871,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("auto-supervise"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_supervise)
     s = sub.add_parser("auto-worker"); s.add_argument("--exp-dir", required=True); s.add_argument("--resume", action="store_true"); s.set_defaults(fn=_cmd_auto_worker)
     s = sub.add_parser("auto-retry"); s.add_argument("--exp", required=True); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_auto_retry)
+    s = sub.add_parser("research-cycle"); s.add_argument("--runs", default=None); s.add_argument("--datasets", default=None); s.add_argument("--llm-json", default=None); s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=_cmd_research_cycle)
     s = sub.add_parser("auto-train"); s.add_argument("--runs", default=None); s.add_argument("--datasets", default=None); s.add_argument("--interval", type=int, default=30); s.add_argument("--once", action="store_true"); s.set_defaults(fn=_cmd_auto_train)
     return p
 
