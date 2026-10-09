@@ -42,6 +42,31 @@ def test_training_render_progress_and_worker():
     assert "50%" in out and "02:14" in out
 
 
+def test_concise_status_idle_with_history(tmp_path, capsys):
+    from aurix_ai.cli import main
+    from aurix_ai.orchestrate import ExperimentRegistry
+    root = str(tmp_path)
+    reg = ExperimentRegistry(root)
+    ds = os.path.join(root, "ds")
+    os.makedirs(ds)
+    rec = reg.submit({"dataset_dir": ds, "dataset_version": "ds-v", "model_type": "m",
+                      "hyperparameters": {}, "seed": 3, "epochs": 2, "device": "cpu"})
+    reg.transition(rec["experiment_id"], "REJECTED", "edge below minimum")
+    assert main(["auto-status", "--runs", root, "--concise"]) == 0
+    out = capsys.readouterr().out
+    assert "Training: IDLE" in out and "No active AURIX training job." in out
+    assert f"Last: REJECTED {rec['experiment_id']}" in out
+
+
+def test_training_view_idle_shows_last_pointer():
+    from aurix_ai.tui import render_training
+    out = render_training(_state(health="IDLE", experiment_id=None,
+                                 last_outcome={"experiment_id": "exp-9",
+                                               "outcome": "FAILED",
+                                               "at": 1, "error": "boom"}))
+    assert "Training: IDLE" in out and "Last: FAILED exp-9" in out
+
+
 def test_failure_render_with_diagnostics():
     from aurix_ai.tui import render_failure
     out = render_failure(_state(health="FAILED", stage="backtest", worker_pid=19104,

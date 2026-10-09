@@ -19,7 +19,8 @@ STATE_FIELDS = ("state", "experiment_id", "dataset_id", "stage", "worker_name",
                 "worker_pid", "epoch", "total_epochs", "loss", "validation_loss",
                 "progress", "started_at", "updated_at", "elapsed_seconds",
                 "heartbeat_age_seconds", "checkpoint", "last_event", "health",
-                "error", "stdout_reference", "stderr_reference", "recovery_state")
+                "error", "stdout_reference", "stderr_reference", "recovery_state",
+                "last_outcome")
 
 
 def _read_json(path: str):
@@ -98,19 +99,65 @@ def pipeline_for(exp_dir: str, status: str) -> list:
     return stages
 
 
+# Statuses with live automation state (a worker may exist or the scheduler may
+# be advancing them). STOPPED is resumable but has no active job, so it counts
+# as history, not as active training.
+LIVE_STATUSES = ("QUEUED", "RUNNING", "COMPLETED", "EVALUATED", "CHECKPOINTED",
+                 "BACKTESTED")
+
+# Terminal outcomes shown as history, never as active training health.
+OUTCOME_STATUSES = ("FAILED", "CANCELLED", "REJECTED", "VALIDATED", "PROMOTED",
+                    "STOPPED")
+
+
+def _last_outcome(exps: list, runs_root: str) -> dict | None:
+    """Latest terminal-or-stopped experiment. History only: never drives the
+    active-training health, and never modifies the underlying records."""
+    done = [e for e in exps if e["status"] in OUTCOME_STATUSES]
+    if not done:
+        return None
+    e = sorted(done, key=lambda x: (x.get("completed_at") or x.get("created_at") or 0))[-1]
+    err = None
+    if e["status"] in ("FAILED", "REJECTED"):
+        edir = os.path.join(runs_root, e["experiment_id"])
+        err = _failure_reason(edir, _tail_events(edir),
+                              _read_json(os.path.join(edir, "governance.json")) or {},
+                              _read_json(os.path.join(edir, "backtest-run.json")) or {})
+    return {"experiment_id": e["experiment_id"], "outcome": e["status"],
+            "at": e.get("completed_at") or e.get("created_at"), "error": err}
+
+
 def build_state(runs_root: str, now_ms: int, stall_after_s: int = 600) -> dict:
-    """Build the authoritative TrainingState. Never raises on missing data."""
+    """Build the authoritative TrainingState. Never raises on missing data.
+
+    Three-way separation (the stop/status-vs-menu discrepancy fix):
+    - health: ACTIVE training only (IDLE/STARTING/RUNNING/STOPPING). A dead
+      past never makes the service look broken.
+    - last_outcome: latest historical outcome (COMPLETED/FAILED/STOPPED/
+      REJECTED...), always preserved, diagnostics via logs/status.
+    - Service ONLINE/OFFLINE is a UI-layer concern (state builds iff the
+      supervisor roots are readable); FAILED history never implies OFFLINE.
+    """
     from .orchestrate import ExperimentRegistry, read_heartbeat
     reg = ExperimentRegistry(runs_root)
     exps = sorted(reg.exps.values(),
                   key=lambda e: (e.get("started_at") or e.get("created_at") or 0,
                                  e.get("created_at") or 0))
-    live = [e for e in exps if e["status"] not in ("FAILED", "CANCELLED", "REJECTED",
-                                                  "VALIDATED", "PROMOTED")]
-    exp = live[-1] if live else (exps[-1] if exps else None)
+    outcome = _last_outcome(exps, runs_root)
+    live = [e for e in exps if e["status"] in LIVE_STATUSES]
+    exp = live[-1] if live else None
     if exp is None:
         return {"state": "IDLE", "health": "IDLE", "experiment_id": None,
-                "pipeline": [], "code_version": CODE_VERSION}
+                "dataset_id": None, "stage": None, "worker_name": None,
+                "worker_pid": None, "worker": None, "epoch": None,
+                "total_epochs": None, "loss": None, "validation_loss": None,
+                "progress": None, "started_at": None, "updated_at": None,
+                "elapsed_seconds": None, "heartbeat_age_seconds": None,
+                "checkpoint": None, "last_event": None, "error": None,
+                "stdout_reference": None, "stderr_reference": None,
+                "log_tail": [], "backtest_run": None, "recovery_state": None,
+                "pipeline": [], "last_outcome": outcome,
+                "code_version": CODE_VERSION}
     eid = exp["experiment_id"]
     edir = os.path.join(runs_root, eid)
     hb = read_heartbeat(edir) or {}
@@ -130,10 +177,7 @@ def build_state(runs_root: str, now_ms: int, stall_after_s: int = 600) -> dict:
 
     status = exp["status"]
     stage_by_status = {"QUEUED": "dataset", "RUNNING": "training",
-                       "STOPPED": "training", "COMPLETED": "evaluation",
-                       "EVALUATED": "backtest", "VALIDATED": "registry",
-                       "REJECTED": "governance", "FAILED": "training",
-                       "CANCELLED": "training", "PROMOTED": "registry",
+                       "COMPLETED": "evaluation", "EVALUATED": "backtest",
                        "CHECKPOINTED": "training", "BACKTESTED": "governance"}
     health, worker, stage, error, recovery = status, None, stage_by_status.get(status, "training"), None, None
     if status == "QUEUED":
@@ -142,6 +186,7 @@ def build_state(runs_root: str, now_ms: int, stall_after_s: int = 600) -> dict:
         pid = hb.get("pid")
         worker = {"name": "training-worker", "pid": pid, "state": "RUNNING"}
         if hb.get("status") == "failed":
+            # Actively failing job (not history): keep FAILED visible + diagnostics.
             health = "FAILED"
             error = f"worker failed: {hb.get('error', 'unknown')}"
             recovery = ("resumable from preserved checkpoint"
@@ -155,25 +200,14 @@ def build_state(runs_root: str, now_ms: int, stall_after_s: int = 600) -> dict:
             recovery = "resumable from preserved checkpoint"
         else:
             health = "STOPPING" if stop_pending else "RUNNING"
-    elif status == "STOPPED":
-        health, recovery = "STOPPED", "resumable from preserved checkpoint"
-        stage = "evaluation" if os.path.exists(os.path.join(edir, "manifest.json")) else "training"
-    elif status == "COMPLETED":
-        health, stage = "RUNNING", "evaluation"
-    elif status == "EVALUATED":
-        health, stage = "RUNNING", "backtest"
-        worker = {"name": "backtest-worker", "pid": None,
-                  "state": "RUNNING",
-                  "note": "short-lived subprocess; see backtest-run.json"}
-    elif status == "VALIDATED":
-        health = "COMPLETED"
-    elif status in ("REJECTED", "FAILED", "CANCELLED"):
-        health = "FAILED" if status != "CANCELLED" else "STOPPED"
-        error = _failure_reason(edir, events, gov, bt_run)
-        recovery = ("resumable from preserved checkpoint"
-                    if os.path.isdir(os.path.join(edir, "checkpoints")) and
-                    bool(os.listdir(os.path.join(edir, "checkpoints")))
-                    else "no checkpoint; safe to resubmit")
+    elif status in ("COMPLETED", "EVALUATED", "CHECKPOINTED", "BACKTESTED"):
+        # Scheduler-side progress between worker runs: automation is working
+        # the experiment, so this counts as active training.
+        health = "RUNNING"
+        if status == "EVALUATED":
+            worker = {"name": "backtest-worker", "pid": None,
+                      "state": "RUNNING",
+                      "note": "short-lived subprocess; see backtest-run.json"}
     progress = (epoch / total) if isinstance(epoch, (int, float)) and total else None
     log_path = os.path.join(edir, "worker.log")
     state = {
@@ -196,6 +230,7 @@ def build_state(runs_root: str, now_ms: int, stall_after_s: int = 600) -> dict:
         "backtest_run": bt_run or None,
         "recovery_state": recovery,
         "pipeline": pipeline_for(edir, status),
+        "last_outcome": outcome,
         "code_version": CODE_VERSION,
     }
     assert all(k in state for k in STATE_FIELDS)

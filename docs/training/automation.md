@@ -105,9 +105,17 @@ its own. Fields: state, experiment_id, dataset_id, stage, worker
 started_at, updated_at, elapsed_seconds, heartbeat_age_seconds, checkpoint,
 last_event, health (IDLE/STARTING/RUNNING/STALLED/FAILED/STOPPING/STOPPED/
 COMPLETED), error, stdout/stderr references (+ log tail), backtest run record,
-recovery_state, per-stage pipeline (dataset/training/evaluation/backtest/
-governance/registry as PENDING/RUNNING/PASSED/FAILED/BLOCKED), code_version.
+recovery_state, last_outcome, per-stage pipeline (dataset/training/evaluation/
+backtest/governance/registry as PENDING/RUNNING/PASSED/FAILED/BLOCKED),
+code_version.
 No broker credentials, no risk/execution data, no training logic inside.
+
+Three-way separation: `health` reflects ACTIVE training only (IDLE when no
+live job, even with failed history); `last_outcome` carries the latest
+terminal outcome with diagnostics, always preserved and reachable via
+logs/status; service ONLINE/OFFLINE is a UI-layer concern. A dead past never
+renders as a broken service, while an actively failing job still shows FAILED
+with its error.
 
 ## Events (single mechanism: `events.jsonl` per run)
 

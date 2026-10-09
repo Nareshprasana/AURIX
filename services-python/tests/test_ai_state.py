@@ -97,10 +97,73 @@ def test_pipeline_stages(tmp_path):
 
 
 def test_failure_reason_from_events(tmp_path):
+    # Terminal FAILED with no live work: service reads IDLE (not a stale
+    # FAILED), history preserved in last_outcome with diagnostics.
     eid, edir = _exp(str(tmp_path), status="FAILED")
     with open(os.path.join(edir, "events.jsonl"), "w") as f:
         f.write(json.dumps({"experiment_id": eid, "type": "TRAINING_FAILED",
                             "timestamp": 1, "reason": "boom"}) + "\n")
     st = build_state(str(tmp_path), _now())
-    assert st["health"] == "FAILED"
-    assert "boom" in (st["error"] or "")
+    assert st["health"] == "IDLE"
+    assert st["last_outcome"]["outcome"] == "FAILED"
+    assert "boom" in (st["last_outcome"]["error"] or "")
+
+
+def test_active_failure_stays_visible(tmp_path):
+    # RUNNING job with a failed heartbeat is an ACTIVE failure: FAILED + error.
+    from aurix_ai.orchestrate import ExperimentRegistry
+    reg = ExperimentRegistry(str(tmp_path))
+    ds = os.path.join(str(tmp_path), "ds")
+    os.makedirs(ds)
+    rec = reg.submit({"dataset_dir": ds, "dataset_version": "ds-v",
+                      "model_type": "m", "hyperparameters": {}, "seed": 5,
+                      "epochs": 2, "device": "cpu"})
+    eid, edir = rec["experiment_id"], os.path.join(str(tmp_path), rec["experiment_id"])
+    reg.transition(eid, "RUNNING", "test")
+    with open(os.path.join(edir, "heartbeat.json"), "w") as f:
+        json.dump({"pid": 424242, "ts": _now(), "epoch": 1,
+                   "checkpoint": "checkpoint-0001.npz", "status": "failed",
+                   "error": "live-boom"}, f)
+    st = build_state(str(tmp_path), _now())
+    assert st["health"] == "FAILED" and "live-boom" in (st["error"] or "")
+
+
+def test_historical_rejected_reads_idle_with_last_outcome(tmp_path):
+    # Exact reported discrepancy: terminal REJECTED history must not render
+    # as an active FAILED job; menu shows IDLE + a Last pointer instead.
+    from aurix_ai.orchestrate import ExperimentRegistry
+    from aurix_ai.tui import render_menu
+    reg = ExperimentRegistry(str(tmp_path))
+    ds = os.path.join(str(tmp_path), "ds")
+    os.makedirs(ds)
+    rec = reg.submit({"dataset_dir": ds, "dataset_version": "ds-v",
+                      "model_type": "m", "hyperparameters": {}, "seed": 6,
+                      "epochs": 2, "device": "cpu"})
+    eid, edir = rec["experiment_id"], os.path.join(str(tmp_path), rec["experiment_id"])
+    reg.transition(eid, "REJECTED", "edge below minimum")
+    with open(os.path.join(edir, "governance.json"), "w") as f:
+        json.dump({"outcome": "REJECTED", "edge": -0.02, "min_edge": 0.01,
+                   "backtest_ok": False}, f)
+    st = build_state(str(tmp_path), _now())
+    assert st["health"] == "IDLE"
+    assert st["last_outcome"]["outcome"] == "REJECTED"
+    menu = render_menu(st)
+    assert "Training     ○ IDLE" in menu
+    assert "Training     ● FAILED" not in menu
+    assert f"Last: REJECTED {eid}" in menu
+
+
+def test_stopped_reads_idle_with_last_outcome(tmp_path):
+    from aurix_ai.orchestrate import ExperimentRegistry
+    reg = ExperimentRegistry(str(tmp_path))
+    ds = os.path.join(str(tmp_path), "ds")
+    os.makedirs(ds)
+    rec = reg.submit({"dataset_dir": ds, "dataset_version": "ds-v",
+                      "model_type": "m", "hyperparameters": {}, "seed": 8,
+                      "epochs": 2, "device": "cpu"})
+    eid = rec["experiment_id"]
+    reg.transition(eid, "RUNNING", "test")
+    reg.transition(eid, "STOPPED", "user stop")
+    st = build_state(str(tmp_path), _now())
+    assert st["health"] == "IDLE"
+    assert st["last_outcome"]["outcome"] == "STOPPED"

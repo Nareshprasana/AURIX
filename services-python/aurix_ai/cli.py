@@ -387,21 +387,28 @@ def _cmd_auto_status(args) -> int:
                      "worker_pid": (hb or {}).get("pid"),
                      "next": stage, "last_result": last_result})
     if args.concise:
-        running = [r for r in rows if r["state"] == "RUNNING"]
-        stopped = [r for r in rows if r["state"] == "STOPPED"]
-        if running:
-            r = running[0]
-            total = r["total_epochs"] or "?"
-            print(f"Training: RUNNING\nExperiment: {r['experiment']}\n"
-                  f"Worker: {r['worker_pid']}\nEpoch: {r['epoch']}/{total}\n"
-                  f"Checkpoint: {r['checkpoint']}\nElapsed: {_fmt_ms(r['elapsed_ms'])}\n"
-                  f"Next stage: {r['next']}")
-        elif stopped:
-            r = stopped[0]
-            print(f"Training: STOPPED\nExperiment: {r['experiment']}\n"
-                  f"Checkpoint: {r['checkpoint']}\nNext stage: resume on next start")
+        # Same authoritative TrainingState as the terminal UI (one source of
+        # truth): active training only; history appears as a Last pointer.
+        import time as _time
+        from .state import build_state
+        st = build_state(root, int(_time.time() * 1000))
+        if st["health"] in ("RUNNING", "STARTING", "STOPPING"):
+            total = st["total_epochs"] or "?"
+            print(f"Training: RUNNING\nExperiment: {st['experiment_id']}\n"
+                  f"Worker: {st['worker_pid']}\nEpoch: {st['epoch']}/{total}\n"
+                  f"Checkpoint: {st['checkpoint']}\nElapsed: {_fmt_ms((st['elapsed_seconds'] or 0) * 1000)}\n"
+                  f"Next stage: {st['stage']}")
+        elif st["health"] == "FAILED":
+            print(f"Training: FAILED\nExperiment: {st['experiment_id']}\n"
+                  f"Error: {st['error'] or 'see logs'}\nNext stage: inspect logs")
+        elif st["health"] == "STALLED":
+            print(f"Training: STALLED\nExperiment: {st['experiment_id']}\n"
+                  f"Error: {st['error'] or 'see logs'}\nNext stage: inspect logs")
         else:
             print("Training: IDLE\nNo active AURIX training job.")
+            lo = st.get("last_outcome")
+            if lo:
+                print(f"Last: {lo['outcome']} {lo['experiment_id']}")
         return 0
     print(json.dumps({"status": "OK", "runs_root": root, "experiments": rows}, indent=2))
     return 0

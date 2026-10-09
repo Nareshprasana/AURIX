@@ -20,6 +20,14 @@ BANNER = """╔═════════════════════�
 DOT = {"ok": "●", "bad": "●", "idle": "○"}
 
 
+def _last_outcome_line(state: dict) -> str | None:
+    lo = state.get("last_outcome")
+    if not lo:
+        return None
+    err = f" — {lo['error'][:100]}" if lo.get("error") else ""
+    return f"Last: {lo['outcome']} {lo['experiment_id']}{err} (see [4] Logs)"
+
+
 def render_menu(state: dict) -> str:
     health = state.get("health", "IDLE")
     training_dot = "●" if health in ("RUNNING", "STARTING", "STOPPING") else \
@@ -28,18 +36,23 @@ def render_menu(state: dict) -> str:
              f"System       ● ONLINE",
              f"Training     {training_dot} {health}",
              "Risk         ● READY",
-             "Broker       DISABLED",
-             "",
-             "What do you want to do?",
-             "",
-             "  [1] Start training",
-             "  [2] Training status",
-             "  [3] Stop training",
-             "  [4] View training logs",
-             "  [5] System status",
-             "  [6] Exit",
-             "",
-             "Select: "]
+             "Broker       DISABLED"]
+    last = _last_outcome_line(state)
+    if last and health == "IDLE":
+        # Idle service with history: show IDLE (never a stale FAILED) while
+        # keeping the historical outcome visible, diagnostics via logs menu.
+        lines += ["", last]
+    lines += ["",
+              "What do you want to do?",
+              "",
+              "  [1] Start training",
+              "  [2] Training status",
+              "  [3] Stop training",
+              "  [4] View training logs",
+              "  [5] System status",
+              "  [6] Exit",
+              "",
+              "Select: "]
     return "\n".join(lines)
 
 
@@ -65,7 +78,13 @@ def _stage_mark(stages: list, name: str) -> str:
 
 def render_training(state: dict) -> str:
     if state.get("health") == "IDLE":
-        return "AURIX TRAINING\n" + "─" * 40 + "\n\nTraining: IDLE\nNo active AURIX training job.\n\n[B] Back   [Q] Quit\n"
+        lines = ["AURIX TRAINING", "─" * 40, "",
+                 "Training: IDLE", "No active AURIX training job."]
+        last = _last_outcome_line(state)
+        if last:
+            lines += ["", last]
+        lines += ["", "[B] Back   [Q] Quit", ""]
+        return "\n".join(lines)
     if state.get("health") == "FAILED":
         return render_failure(state)
     exp = state.get("experiment_id") or "?"

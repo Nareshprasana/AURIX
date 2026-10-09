@@ -215,7 +215,11 @@ def test_failed_heartbeat_marks_failed_with_diagnostic(tmp_path):
                    "error": "boom"}, f)
     assert s.reap() == [(eid, "failed")]
     assert s.reg.get(eid)["status"] == "FAILED"
+    # Terminal failure is history, not active training: service reads IDLE
+    # while the failure (with diagnostics) is preserved in last_outcome.
     from aurix_ai.state import build_state
     import time
     st = build_state(reg_root, int(time.time() * 1000))
-    assert st["health"] == "FAILED" and "boom" in (st["error"] or "")
+    assert st["health"] == "IDLE"
+    assert st["last_outcome"]["outcome"] == "FAILED"
+    assert "boom" in (st["last_outcome"]["error"] or "")
