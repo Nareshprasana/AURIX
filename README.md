@@ -118,7 +118,8 @@ Phase proof scripts: `pnpm verify:cumulative|strategy|portfolio|execution`
   no arguments needed. `aurix train status` shows a concise block (or IDLE);
   `aurix train logs [--last N]` shows recent events; `aurix train stop` stops
   gracefully with checkpoints preserved. Details: `docs/training/automation.md`.
-- One heavy job at a time; workers are independent processes with checkpoint resume; governance promotes to VALIDATED only (accuracy edge + backtest gate), never beyond — PAPER+ stays operator-only.
+- One heavy job at a time; workers are independent processes with checkpoint resume; governance promotes to VALIDATED only (accuracy edge + backtest + walk-forward + stress gates), never beyond — PAPER+ stays operator-only.
+- Research agent (`research-cycle`) plans outcome-driven experiments within budgets; local API (`serve`, localhost + token) exposes state/events/start/stop over the same functions — no broker/risk surface.
 - Existing run directories are immutable: nothing may delete/overwrite/reuse them; test cleanup uses isolated temp roots only.
 
 ## Resource usage

@@ -50,7 +50,6 @@ def heartbeat_loop(exp_dir: str, exp_id: str, stop: threading.Event, mode: str,
 
 def run_worker(exp_dir: str, resume: bool = False) -> int:
     from .datasets import load_dataset
-    from .model import MarketMLP
     from .train import run_training
     with open(os.path.join(exp_dir, "experiment.json")) as f:
         exp = json.load(f)
@@ -73,8 +72,11 @@ def run_worker(exp_dir: str, resume: bool = False) -> int:
         if resume:
             ckpts = sorted(glob.glob(os.path.join(exp_dir, "checkpoints", "*.npz")))
             if ckpts:
-                from .model import load_checkpoint
-                model = MarketMLP()
+                import numpy as _np
+                from .model import load_checkpoint, make_model
+                with _np.load(ckpts[-1], allow_pickle=False) as _z:
+                    _solver = str(_z["solver"][0]) if "solver" in _z.files else "sgd"
+                model = make_model("logreg-lbfgs" if _solver == "lbfgs" else "sgd-logloss")
                 meta = load_checkpoint(ckpts[-1], model)
                 epochs_left = max(0, int(defn["epochs"]) - int(meta.get("epoch", 0)))
                 resume_from = None  # state already loaded; run_training must NOT refit scaler

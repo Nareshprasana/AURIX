@@ -11,3 +11,7 @@ export {
   DATA_FRESHNESS, classifyDataAge, dataFreshness, type Freshness
 } from './quality.js';
 export { EVENT_TYPES, invalidationTopicsFor, corpActionToEvent, earningsEvent, StubProvider } from './events.js';
+export {
+  seedEligibility, resolveEligibility, isTradable,
+  type EligibilityRecord, type EligibilityResolution
+} from './eligibility.js';

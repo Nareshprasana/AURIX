@@ -65,8 +65,11 @@ def _cmd_train(args) -> int:
     hp = (ml.get("hyperparams") or {})
     X, y, _ts, _inst, manifest = load_dataset(args.dataset)
     rep = select_device(args.device or (policy.get("training") or {}).get("device_policy", "auto"))
+    tr = policy.get("training") or {}
     config = {"alpha": hp.get("alpha", 0.0001), "random_state": hp.get("random_state", 7),
-              "model_type": ml.get("model_type", "sgd-logloss")}
+              "model_type": tr.get("solver", ml.get("model_type", "sgd-logloss")),
+              "lbfgs_max_iter": tr.get("lbfgs_max_iter", 1000),
+              "early_stopping_patience": tr.get("early_stopping_patience", 0)}
     out = run_training(args.run, args.out, X, y, manifest["dataset_version"],
                        manifest["feature_spec"]["version"], manifest["label_spec"]["version"],
                        config, rep.device_selected, seed=args.seed, epochs=args.epochs)
@@ -79,7 +82,7 @@ def _cmd_train(args) -> int:
 def _cmd_resume(args) -> int:
     import glob
     from .datasets import load_dataset
-    from .model import MarketMLP, load_checkpoint
+    from .model import load_checkpoint, make_model
     from .train import run_training
     with open(os.path.join(args.run_dir, "manifest.json")) as f:
         manifest = json.load(f)
@@ -90,7 +93,10 @@ def _cmd_resume(args) -> int:
     ckpts = sorted(glob.glob(os.path.join(args.run_dir, "checkpoints", "*.npz")))
     if not ckpts:
         raise SystemExit("no checkpoints to resume from")
-    model = MarketMLP()
+    import numpy as _np
+    with _np.load(ckpts[-1], allow_pickle=False) as _z:
+        _solver = str(_z["solver"][0]) if "solver" in _z.files else "sgd"
+    model = make_model("logreg-lbfgs" if _solver == "lbfgs" else "sgd-logloss")
     meta = load_checkpoint(ckpts[-1], model)
     out = run_training(manifest["run_id"], os.path.dirname(args.run_dir.rstrip("/")),
                        X, y, ds_manifest["dataset_version"],
@@ -302,19 +308,21 @@ def _cmd_auto_suggest(args) -> int:
     return 0
 
 
-def _node_backtest_runner(bars_path: str, exp_dir: str) -> dict:
+def _node_backtest_runner(bars_path: str, exp_dir: str, mode_args: tuple = (),
+                          record_name: str = "backtest-run.json") -> dict:
     import subprocess as _sp
     import time as _time
     repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     script = os.path.join(repo, "scripts", "backtest-gate.mjs")
     hooks = os.path.join(repo, "scripts", "aurix-register.mjs")
-    record = {"stage": "backtest", "experiment_id": os.path.basename(exp_dir),
+    record = {"stage": "backtest" if not mode_args else " ".join(mode_args),
+              "experiment_id": os.path.basename(exp_dir),
               "worker_name": "backtest-worker", "worker_pid": os.getpid(),
               "started_at": int(_time.time() * 1000), "stdout": "", "stderr": "",
               "exit_code": None, "ended_at": None, "ok": False}
     try:
-        r = _sp.run(["node", "--import", hooks, script, bars_path],
-                    capture_output=True, text=True, timeout=300, cwd=repo)
+        r = _sp.run(["node", "--import", hooks, script, bars_path, *mode_args],
+                    capture_output=True, text=True, timeout=600, cwd=repo)
         record.update({"stdout": r.stdout or "EMPTY", "stderr": r.stderr or "EMPTY",
                        "exit_code": r.returncode, "ended_at": int(_time.time() * 1000)})
         lines = [l for l in r.stdout.strip().split("\n") if l.strip()]
@@ -329,13 +337,24 @@ def _node_backtest_runner(bars_path: str, exp_dir: str) -> dict:
                        "stderr": record.get("stderr") or "EMPTY",
                        "stdout": record.get("stdout") or "EMPTY"})
     try:
-        with open(os.path.join(exp_dir, "backtest-run.json"), "w") as f:
+        with open(os.path.join(exp_dir, record_name), "w") as f:
             json.dump(record, f, indent=2)
     except OSError:
         pass
     return {k: v for k, v in record.items()
             if k in ("ok", "infra_error", "status", "orders", "fills", "trades", "signals",
-                     "max_drawdown_pct", "total_return", "limitations", "reason")}
+                     "windows", "window_tests", "median_test_sharpe", "scenarios",
+                     "max_stressed_dd", "max_drawdown_pct", "total_return",
+                     "limitations", "reason")}
+
+
+def _node_gate_runner(bars_path: str, exp_dir: str, mode: str) -> dict:
+    """Extended-gate runner: walkforward=<T,t,s,maxW> or stress."""
+    if mode.startswith("walkforward"):
+        spec = mode.split("=", 1)[1]
+        return _node_backtest_runner(bars_path, exp_dir, (f"--walkforward={spec}",),
+                                     "walkforward-run.json")
+    return _node_backtest_runner(bars_path, exp_dir, ("--stress",), "stress-run.json")
 
 
 def _load_gates() -> tuple:
@@ -350,7 +369,9 @@ def _load_gates() -> tuple:
     sched = {"max_concurrent_training": int(auto.get("max_concurrent_training", 1)),
              "heartbeat_timeout_s": int(auto.get("heartbeat_timeout_s", 600))}
     gates = {"min_oos_edge_vs_baseline": float(auto.get("min_oos_edge_vs_baseline", 0.01)),
-             "max_backtest_drawdown_pct": float(auto.get("max_backtest_drawdown_pct", 10.0))}
+             "max_backtest_drawdown_pct": float(auto.get("max_backtest_drawdown_pct", 10.0)),
+             "walkforward": dict(auto.get("walkforward", {}) or {}),
+             "stress": dict(auto.get("stress", {}) or {})}
     return sched, gates
 
 
@@ -647,8 +668,11 @@ def _discover_default_dataset(datasets_root: str | None) -> tuple:
                 policy = yaml.safe_load(f) or {}
             break
     droots = [datasets_root] if datasets_root else []
-    droots.append((policy.get("automation", {}) or {}).get("default_dataset_dir"))
-    droots.append(os.path.join(repo_root(), "data", "datasets"))
+    if not droots:
+        # No explicit scope: fall back to the repo datasets root. An explicit
+        # (even nonexistent) root is honored exactly and fails closed.
+        droots.append((policy.get("automation", {}) or {}).get("default_dataset_dir"))
+        droots.append(os.path.join(repo_root(), "data", "datasets"))
     candidates = []
     for droot in droots:
         if not droot or not os.path.isdir(droot):
@@ -674,6 +698,15 @@ def _cmd_auto_train(args) -> int:
     """Single user-facing entry (`aurix train`). Takes no dataset/run/epoch
     args: ensures default experiments exist, then hands off to a detached
     supervisor and returns immediately. Workers continue independently."""
+    out = _auto_train_impl(runs=args.runs, datasets=args.datasets,
+                           interval=args.interval, once=args.once)
+    print(json.dumps({"status": "OK", **out}, indent=2, default=str))
+    return 0
+
+
+def _auto_train_impl(runs=None, datasets=None, interval=30, once=False) -> dict:
+    """Shared start logic for the CLI, TUI action, and local API. Returns a
+    JSON-serializable summary (never prints); raises fail-closed on error."""
     import yaml
     from .orchestrate import ExperimentRegistry, Scheduler, runs_root
     policy = {}
@@ -684,18 +717,18 @@ def _cmd_auto_train(args) -> int:
             break
     auto = policy.get("automation", {})
     ml = policy.get("market_ml", {})
-    root = runs_root(args.runs)
+    root = runs_root(runs)
     from .orchestrate import clear_stop
     clear_stop(root)  # explicit user start: lift any prior stop request
     sched, gates = _load_gates()
     from .orchestrate import Scheduler
-    s = Scheduler(root, sched, backtest_runner=_node_backtest_runner)
+    s = Scheduler(root, sched, backtest_runner=_node_backtest_runner, extended_runner=_node_gate_runner)
     revived = [eid for eid, _ in s.revive_stopped(detach=True)]
     reg = s.reg
     active = [e for e in reg.exps.values() if e["status"] in ("QUEUED", "RUNNING")]
     submitted = []
     if not active and not revived:
-        ddir, manifest = _discover_default_dataset(args.datasets)
+        ddir, manifest = _discover_default_dataset(datasets)
         budget = int(auto.get("max_experiments_per_cycle", 3))
         epochs = int(auto.get("default_epochs", 5))
         hp = dict((ml.get("hyperparameters") or {}))
@@ -719,26 +752,30 @@ def _cmd_auto_train(args) -> int:
                 submitted.append(rec["experiment_id"])
             except Exception:
                 pass  # existing ID: immutable history, never resubmitted
-    if args.once:
+    if once:
         cycle = s.cycle(detach=True)
         cycle["revived"] = revived
-        print(json.dumps({"status": "OK", "mode": "once", "runs_root": root,
-                          "submitted": submitted, "cycle": cycle,
-                          "next": "workers continue independently; use auto-status"},
-                         indent=2, default=str))
-        return 0
+        return {"mode": "once", "runs_root": root, "submitted": submitted,
+                "cycle": cycle,
+                "next": "workers continue independently; use auto-status"}
     if revived:
         submitted = revived + submitted
-    return _auto_train_supervised(root, submitted, args.interval)
+    out = _auto_train_supervised_result(root, submitted, interval)
+    out["mode"] = "supervised"
+    return out
+
+
+def _auto_train_supervised_result(root: str, submitted: list, interval: int) -> dict:
+    pid, fresh = _ensure_supervisor(os.path.abspath(root), interval)
+    return {"mode": "supervised", "runs_root": root, "submitted": submitted,
+            "supervisor_pid": pid, "supervisor": "started" if fresh else "reused",
+            "message": "automated training started; workers continue independently"}
 
 
 def _auto_train_supervised(root: str, submitted: list, interval: int) -> int:
-    pid, fresh = _ensure_supervisor(os.path.abspath(root), interval)
-    print(json.dumps({"status": "OK", "mode": "supervised", "runs_root": root,
-                      "submitted": submitted, "supervisor_pid": pid,
-                      "supervisor": "started" if fresh else "reused",
-                      "message": "automated training started; workers continue independently"},
-                     indent=2))
+    print(json.dumps({"status": "OK",
+                      **_auto_train_supervised_result(root, submitted, interval)},
+                     indent=2, default=str))
     return 0
 
 
@@ -748,7 +785,7 @@ def _cmd_auto_supervise(args) -> int:
     sched, gates = _load_gates()
     root = runs_root(args.runs)
     started_at = int(_time.time() * 1000)
-    s = Scheduler(root, sched, backtest_runner=_node_backtest_runner)
+    s = Scheduler(root, sched, backtest_runner=_node_backtest_runner, extended_runner=_node_gate_runner)
     while True:
         if stop_requested(root):
             break  # graceful supervisor exit: no new work after a stop
@@ -766,6 +803,21 @@ def _cmd_auto_supervise(args) -> int:
 def _cmd_auto_worker(args) -> int:
     from .worker import run_worker
     raise SystemExit(run_worker(args.exp_dir, resume=args.resume))
+
+
+def _cmd_serve(args) -> int:
+    """Run the minimal localhost training API (P1-7). Token from
+    AURIX_API_TOKEN env (fail closed when absent). Blocks serving."""
+    from .api import TrainingAPIServer
+    from .orchestrate import runs_root
+    srv = TrainingAPIServer(runs_root(args.runs), None,
+                            host="127.0.0.1", port=int(args.port))
+    print(f"serving training API on {srv.url} (localhost only, token required)")
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    return 0
 
 
 def _cmd_auto_retry(args) -> int:
@@ -870,6 +922,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("auto-start"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_start)
     s = sub.add_parser("auto-supervise"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_supervise)
     s = sub.add_parser("auto-worker"); s.add_argument("--exp-dir", required=True); s.add_argument("--resume", action="store_true"); s.set_defaults(fn=_cmd_auto_worker)
+    s = sub.add_parser("serve"); s.add_argument("--runs", default=None); s.add_argument("--port", type=int, default=8741); s.set_defaults(fn=_cmd_serve)
     s = sub.add_parser("auto-retry"); s.add_argument("--exp", required=True); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_auto_retry)
     s = sub.add_parser("research-cycle"); s.add_argument("--runs", default=None); s.add_argument("--datasets", default=None); s.add_argument("--llm-json", default=None); s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=_cmd_research_cycle)
     s = sub.add_parser("auto-train"); s.add_argument("--runs", default=None); s.add_argument("--datasets", default=None); s.add_argument("--interval", type=int, default=30); s.add_argument("--once", action="store_true"); s.set_defaults(fn=_cmd_auto_train)

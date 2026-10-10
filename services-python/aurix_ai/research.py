@@ -25,7 +25,7 @@ import time
 from .errors import fail
 
 RESEARCH_VERSION = "research-v1"
-SUPPORTED_MODELS = ("sgd-logloss",)
+SUPPORTED_MODELS = ("sgd-logloss", "logreg-lbfgs")
 SUPPORTED_FEATURES = ("feat-v1",)
 SUPPORTED_LABELS = ("label-v1",)
 SUPPORTED_HP_KEYS = frozenset({"alpha", "learning_rate", "eta0", "random_state"})
@@ -230,8 +230,11 @@ def derive_questions(outcomes: list, log: list, datasets: list) -> list:
 
 
 def propose_experiment(question: dict, datasets: list, base_hp: dict,
-                       seed: int, epochs: int, budget_note: str = "") -> dict:
+                       seed: int, epochs: int, budget_note: str = "",
+                       model_type: str = "sgd-logloss") -> dict:
     """Build a candidate definition from a question. Supported space only."""
+    if model_type not in SUPPORTED_MODELS:
+        raise fail("INVALID_CONFIG", f"unsupported model: {model_type}")
     ds = datasets[0] if datasets else None
     if question.get("topic") == "adjustment":
         adj = [d for d in datasets if "adjusted" in d]
@@ -240,7 +243,7 @@ def propose_experiment(question: dict, datasets: list, base_hp: dict,
         raise fail("DATASET_MISSING", "no dataset available for proposal")
     hp = dict(base_hp or {})
     hp["random_state"] = seed
-    return {"dataset_dir": ds, "model_type": "sgd-logloss",
+    return {"dataset_dir": ds, "model_type": model_type,
             "hyperparameters": hp, "seed": seed, "epochs": epochs,
             "device": "cpu", "_question_id": question["id"],
             "_budget_note": budget_note}
@@ -385,7 +388,9 @@ def run_cycle(runs_root: str, datasets: list, policy: dict,
             # distinct configs; identical questions reproduce identical configs.
             qseed = 7 + (int(q["id"][-4:], 16) % 20)
             raw = propose_experiment(q, datasets, base_hp, seed=qseed, epochs=epochs,
-                                     budget_note=f"cycle cap {per_cycle}, total cap {total_cap}")
+                                     budget_note=f"cycle cap {per_cycle}, total cap {total_cap}",
+                                     model_type=policy.get("market_ml", {}).get("model_type", "sgd-logloss")
+                                     if isinstance(policy.get("market_ml"), dict) else "sgd-logloss")
             clean = validate_proposal(raw, runs_root, datasets)
         except Exception as e:
             plan["skipped"].append(f"{q['id']}: {e}")

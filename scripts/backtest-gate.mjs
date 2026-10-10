@@ -1,16 +1,19 @@
 // Backtest gate for the training orchestrator: real bars through the EXISTING
-// backtest engine with cost/slippage/liquidity-aware settings. Prints one JSON
-// line: {ok, status, orders, fills, trades, max_drawdown_pct, reason}.
+// backtest engine with cost/slippage/liquidity-aware settings.
+// Modes (exactly one JSON line on stdout):
+//   (default)       single backtest over all bars
+//   --walkforward T,t,s[,maxW]  walk-forward over rolling windows (train T,
+//                   test t, step s bars; at most maxW windows, default 4)
+//   --stress        cost×2 and spread/slippage-shock stress scenarios
 // ok=true means the engine ran cleanly with point-in-time discipline (NOT that
 // the strategy is profitable — classification accuracy != profitability).
-// Usage: node --import ./scripts/aurix-register.mjs scripts/backtest-gate.mjs <bars.json>
+// Usage: node --import ./scripts/aurix-register.mjs scripts/backtest-gate.mjs <bars.json> [--walkforward ...] [--stress]
 import { readFileSync } from 'node:fs';
-import { buildDataset } from '../dist/apps/backtest/src/index.js';
-import { runBacktest } from '../dist/apps/backtest/src/index.js';
+import { buildDataset, runBacktest, runWalkForward, makeWindows, runStress } from '../dist/apps/backtest/src/index.js';
 import { FAMILY_PRESETS, TradingCalendar } from '../dist/packages/strategy/src/index.js';
 
 const barsPath = process.argv[2];
-if (!barsPath) throw new Error('usage: backtest-gate.mjs <backtest-bars.json>');
+if (!barsPath) throw new Error('usage: backtest-gate.mjs <backtest-bars.json> [--walkforward T,t,s[,maxW]] [--stress]');
 const bars = JSON.parse(readFileSync(barsPath, 'utf8'));
 const universe = [...new Set(bars.map((b) => b.instrument_id))];
 const dataset = buildDataset({ id: 'gate', timeframe: '1D', bars, source: 'orchestrator-gate', calendar_version: 'cal-weekday-v1' });
@@ -32,17 +35,75 @@ const strategy = {
 };
 const from = new Date(dataset.range.from_ts).toISOString().slice(0, 10);
 const to = new Date(dataset.range.to_ts).toISOString().slice(0, 10);
-const run = runBacktest({
-  dataset, strategy,
-  calendar: TradingCalendar.weekdays(from, to, [], 'cal-weekday-v1'),
-  initial_cash: 100_000, dataVersion: dataset.version, generatedAt: Date.now()
-});
-for (const o of run.orders) {
-  if (!(o.ts_execute > o.ts_signal)) {
-    console.log(JSON.stringify({ ok: false, reason: 'point-in-time violation' }));
-    process.exit(0);
+const calendar = TradingCalendar.weekdays(from, to, [], 'cal-weekday-v1');
+const base = { dataset, strategy, calendar, initial_cash: 100_000, dataVersion: dataset.version, generatedAt: Date.now() };
+
+function checkPit(run) {
+  for (const o of run.orders) {
+    if (!(o.ts_execute > o.ts_signal)) {
+      console.log(JSON.stringify({ ok: false, reason: 'point-in-time violation' }));
+      process.exit(0);
+    }
   }
 }
+
+const args = process.argv.slice(3);
+const wfArg = args.find((a) => a.startsWith('--walkforward'));
+if (wfArg) {
+  const spec = (wfArg.split(' ')[1] || wfArg.split('=')[1] || '60,20,20').split(',').map(Number);
+  const [trainBars, testBars, stepBars] = spec;
+  const maxW = spec[3] ?? 4;
+  if (![trainBars, testBars, stepBars].every((n) => Number.isInteger(n) && n > 0)) {
+    console.log(JSON.stringify({ ok: false, reason: 'WALK_WINDOW_INVALID' }));
+    process.exit(0);
+  }
+  const sessions = [...new Set(bars.map((b) => new Date(b.ts).toISOString().slice(0, 10)))].sort();
+  let windows;
+  try {
+    windows = makeWindows(sessions, trainBars, testBars, stepBars).slice(0, maxW);
+  } catch (e) {
+    console.log(JSON.stringify({ ok: false, reason: String(e?.message ?? e) }));
+    process.exit(0);
+  }
+  const wf = runWalkForward(base, dataset, windows);
+  const tests = wf.windows.map((w) => ({
+    trainFrom: w.window.trainFrom, testFrom: w.window.testFrom,
+    status: w.test.status, trades: w.test.trades.length,
+    sharpe: w.test.metrics.sharpe ?? 0, max_drawdown: Math.abs(w.test.metrics.max_drawdown ?? 0)
+  }));
+  const sharpes = tests.filter((t) => t.status === 'COMPLETED').map((t) => t.sharpe);
+  sharpes.sort((a, b) => a - b);
+  const medianSharpe = sharpes.length ? sharpes[Math.floor(sharpes.length / 2)] : null;
+  console.log(JSON.stringify({
+    ok: tests.length > 0 && tests.every((t) => t.status === 'COMPLETED'),
+    status: 'WALKFORWARD', windows: tests.length, window_tests: tests,
+    median_test_sharpe: medianSharpe,
+    reason: tests.length === 0 ? 'no windows evaluated' : null
+  }));
+  process.exit(0);
+}
+
+if (args.includes('--stress')) {
+  const scenarios = [
+    { name: 'cost-x2', costMult: 2 },
+    { name: 'friction-shock', slippageMult: 3, spreadAddBps: 10, participationMult: 0.5 }
+  ];
+  const results = runStress(base, scenarios).map((r) => ({
+    scenario: r.scenario, status: r.run.status,
+    trades: r.run.trades.length, baseSharpe: r.baseSharpe, stressedSharpe: r.stressedSharpe,
+    baseDd: Math.abs(r.baseDd ?? 0), stressedDd: Math.abs(r.stressedDd ?? 0)
+  }));
+  console.log(JSON.stringify({
+    ok: results.length > 0 && results.every((r) => r.status === 'COMPLETED'),
+    status: 'STRESS', scenarios: results,
+    max_stressed_dd: results.length ? Math.max(...results.map((r) => r.stressedDd)) : null,
+    reason: results.length === 0 ? 'no scenarios evaluated' : null
+  }));
+  process.exit(0);
+}
+
+const run = runBacktest(base);
+checkPit(run);
 console.log(JSON.stringify({
   ok: run.status === 'COMPLETED',
   status: run.status,

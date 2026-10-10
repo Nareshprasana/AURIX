@@ -111,7 +111,96 @@ class MarketMLP:
         self.step = int(np.asarray(d["step"]).ravel()[0])
 
 
-def save_checkpoint(path: str, model: MarketMLP, meta: dict) -> None:
+class LogRegLBFGS:
+    """Batch LogisticRegression (lbfgs) fitted to convergence in one shot.
+
+    Same scaler discipline (train-only), same checkpoint/artifact schema as
+    MarketMLP, plus solver metadata. Deterministic given data+seed; resume is
+    an exact refit, so checkpoints stay truthful. Use when the SGD path
+    cannot converge within budget (see training-proof loss 5.8 vs 0.69).
+    """
+
+    def __init__(self, alpha: float = 0.0001, random_state: int = 7,
+                 max_iter: int = 1000):
+        from sklearn.linear_model import LogisticRegression
+        c = 1.0 / max(alpha, 1e-12)
+        self.clf = LogisticRegression(C=c, solver="lbfgs", max_iter=max_iter,
+                                      random_state=random_state)
+        self.scaler = StreamingStandardScaler()
+        self.classes_ = np.array([0, 1])
+        self.epoch = 0
+        self.step = 0
+        self.alpha = alpha
+        self.random_state = random_state
+        self.max_iter = max_iter
+        self.converged = False
+
+    def fit_scaler(self, X_train: np.ndarray) -> None:
+        self.scaler.partial_fit(X_train)
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> float:
+        """Fit to convergence. Returns mean train log-loss."""
+        from sklearn.metrics import log_loss
+        import warnings
+        from sklearn.exceptions import ConvergenceWarning
+        Xs = self.scaler.transform(X)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ConvergenceWarning)
+            self.clf.fit(Xs, y)
+        self.epoch += 1
+        self.step += 1
+        used = int(getattr(self.clf, "n_iter_", [self.max_iter])[0])
+        self.converged = used < self.max_iter
+        proba = self.clf.predict_proba(Xs)
+        return float(log_loss(y, proba, labels=[0, 1]))
+
+    def partial_epoch(self, X: np.ndarray, y: np.ndarray) -> float:
+        return self.fit(X, y)
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        return self.clf.predict_proba(self.scaler.transform(X))
+
+    def state_dict(self) -> dict:
+        return {
+            "coef": np.asarray(self.clf.coef_),
+            "intercept": np.asarray(self.clf.intercept_),
+            "scaler_mean": np.asarray(self.scaler.mean_),
+            "scaler_var": np.asarray(self.scaler.var_),
+            "scaler_n": np.asarray([self.scaler.n_]),
+            "epoch": np.asarray([self.epoch]),
+            "step": np.asarray([self.step]),
+            "t_": np.asarray([0.0]),
+            "solver": np.asarray(["lbfgs"]),
+            "converged": np.asarray([self.converged]),
+        }
+
+    def load_state_dict(self, d: dict) -> None:
+        n_feat = np.asarray(d["coef"]).shape[1]
+        self.clf.fit(np.zeros((2, n_feat)), np.array([0, 1]))
+        self.clf.coef_ = np.asarray(d["coef"])
+        self.clf.intercept_ = np.asarray(d["intercept"])
+        self.scaler.mean_ = np.asarray(d["scaler_mean"])
+        self.scaler.var_ = np.asarray(d["scaler_var"])
+        self.scaler.n_ = int(np.asarray(d["scaler_n"]).ravel()[0])
+        self.epoch = int(np.asarray(d["epoch"]).ravel()[0])
+        self.step = int(np.asarray(d["step"]).ravel()[0])
+        try:
+            self.converged = bool(np.asarray(d["converged"]).ravel()[0])
+        except Exception:
+            self.converged = False
+
+
+def make_model(model_type: str, alpha: float = 0.0001, random_state: int = 7,
+               max_iter: int = 1000):
+    """Solver factory. Unknown types fail closed (no silent fallback)."""
+    if model_type == "sgd-logloss":
+        return MarketMLP(alpha=alpha, random_state=random_state)
+    if model_type == "logreg-lbfgs":
+        return LogRegLBFGS(alpha=alpha, random_state=random_state, max_iter=max_iter)
+    raise fail("INVALID_CONFIG", f"unsupported model_type: {model_type}")
+
+
+def save_checkpoint(path: str, model, meta: dict) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if os.path.exists(path):
         raise fail("INVALID_CONFIG", f"checkpoint exists (immutable): {path}")

@@ -43,6 +43,12 @@ training:
   seed: 7
   max_samples: null
   out_dir: training_runs
+  # Convergence (P1-2): solver sgd-logloss (legacy default, unchanged) or
+  # logreg-lbfgs (batch fit to convergence). early_stopping_patience 0
+  # preserves exact legacy fixed-epoch behavior; >0 stops on VAL plateau.
+  solver: sgd-logloss
+  lbfgs_max_iter: 1000
+  early_stopping_patience: 0
 
 registry:
   # New models enter as CANDIDATE and NEVER auto-activate. Explicit promote() only.
@@ -63,6 +69,20 @@ automation:
   min_oos_edge_vs_baseline: 0.01
   max_backtest_drawdown_pct: 10.0
   require_backtest_completed: true
+  # Walk-forward gate: rolling windows over the gate dataset. Thresholds are
+  # explicit policy (not spec claims): median test Sharpe floor + all windows
+  # must complete cleanly with disjoint test ranges (enforced by the engine).
+  walkforward:
+    enabled: true
+    train_bars: 60
+    test_bars: 20
+    step_bars: 20
+    max_windows: 4
+    min_median_sharpe: 0.0
+  # Stress gate: fixed reproducible scenarios (see backtest-gate.mjs).
+  stress:
+    enabled: true
+    max_stressed_dd_pct: 10.0
   # Optional override for `aurix train` dataset discovery; when absent the
   # newest valid versioned dataset under data/datasets is used.
   # default_dataset_dir: null

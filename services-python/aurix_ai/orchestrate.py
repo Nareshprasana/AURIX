@@ -330,12 +330,14 @@ def default_launcher(exp_dir: str, resume: bool, detach: bool = False) -> subpro
 
 
 class Scheduler:
-    def __init__(self, root: str, policy: dict, launcher=None, backtest_runner=None):
+    def __init__(self, root: str, policy: dict, launcher=None, backtest_runner=None,
+                 extended_runner=None):
         self.root = root
         self.policy = policy
         self.reg = ExperimentRegistry(root)
         self.launcher = launcher or default_launcher
         self.backtest_runner = backtest_runner or (lambda bars, exp_dir: {"ok": False, "reason": "no-runner"})
+        self.extended_runner = extended_runner or (lambda bars, exp_dir, mode: {"ok": False, "reason": "no-runner"})
         self.heartbeat_timeout_s = int(policy.get("heartbeat_timeout_s", 600))
         self.max_concurrent = int(policy.get("max_concurrent_training", 1))
 
@@ -480,6 +482,48 @@ class Scheduler:
         return done
 
     # -- stage 4: backtest gate + governance --------------------------------
+    def _extended_gate(self, eid: str, edir: str, bars_path: str, kind: str,
+                       cfg: dict, decision: dict) -> bool:
+        """Run one extended gate (walkforward|stress). Returns pass/fail.
+        Infra errors raise BACKTEST_FAILED (retryable FAILED); poor results
+        return False (governance REJECTED). Results persisted + audited."""
+        if not os.path.exists(bars_path):
+            raise fail("BACKTEST_FAILED",
+                       f"{kind} bars missing at gate time: {bars_path}")
+        if kind == "walkforward":
+            spec = (f"{int(cfg.get('train_bars', 60))},{int(cfg.get('test_bars', 20))},"
+                    f"{int(cfg.get('step_bars', 20))},{int(cfg.get('max_windows', 4))}")
+            mode = f"walkforward={spec}"
+            fname, evname = "walkforward.json", "WALKFORWARD_COMPLETED"
+        else:
+            mode = "stress"
+            fname, evname = "stress.json", "STRESS_COMPLETED"
+        emit_event(edir, eid, f"{kind.upper()}_STARTED", {"bars": bars_path})
+        try:
+            res = self.extended_runner(bars_path, edir, mode)
+        except Exception as e:
+            res = {"ok": False, "infra_error": True, "reason": f"runner error: {e}"}
+        with open(os.path.join(edir, fname), "w") as f:
+            json.dump(res, f, indent=2, sort_keys=True, default=str)
+        if res.get("infra_error"):
+            raise fail("BACKTEST_FAILED",
+                       f"{kind} infrastructure failure: {res.get('reason')}")
+        emit_event(edir, eid, evname, {"ok": bool(res.get("ok"))})
+        decision[kind] = res
+        if not res.get("ok"):
+            return False
+        if kind == "walkforward":
+            floor = float(cfg.get("min_median_sharpe", 0.0))
+            med = res.get("median_test_sharpe")
+            if med is None or float(med) < floor:
+                return False
+        else:
+            cap = float(cfg.get("max_stressed_dd_pct", 10.0))
+            worst = res.get("max_stressed_dd")
+            if worst is None or float(worst) > cap:
+                return False
+        return True
+
     def govern(self, eid: str, gates: dict) -> dict:
         from .registry import ModelRegistry
         exp = self.reg.get(eid)
@@ -511,20 +555,34 @@ class Scheduler:
         bt_ok = bool(bt.get("ok")) and float(bt.get("max_drawdown_pct", 100.0)) <= max_dd
         decision = {"edge": edge, "min_edge": min_edge, "backtest_ok": bt_ok,
                     "backtest": bt}
+        # Extended gates: walk-forward + stress. Only evaluated when the base
+        # gate passes (saves compute); absent/disabled sections mean "not
+        # required" so older callers and tests keep prior behavior.
+        wf_cfg = gates.get("walkforward") or {}
+        st_cfg = gates.get("stress") or {}
+        wf_ok, st_ok = True, True
+        if bt_ok and bars_path and os.path.exists(bars_path):
+            if wf_cfg.get("enabled", False):
+                wf_ok = self._extended_gate(eid, edir, bars_path, "walkforward",
+                                            wf_cfg, decision)
+            if wf_ok and st_cfg.get("enabled", False):
+                st_ok = self._extended_gate(eid, edir, bars_path, "stress",
+                                            st_cfg, decision)
         mreg = ModelRegistry(os.path.join(self.root, "model-registry.json"))
         model_id = f"aurix-marketml-{eid}"
-        if edge >= min_edge and bt_ok:
+        if edge >= min_edge and bt_ok and wf_ok and st_ok:
             if model_id not in mreg.models:
                 art_sha = json.load(open(os.path.join(edir, "manifest.json")))["artifact_sha256"]
                 mreg.register(model_id, eid, art_sha, "orchestrator")
             mreg.promote(model_id, "VALIDATED", "orchestrator",
-                         f"oos edge {edge:.4f} >= {min_edge}; backtest ok")
-            self.reg.transition(eid, "VALIDATED", f"edge={edge:.4f} backtest ok")
+                         f"oos edge {edge:.4f} >= {min_edge}; backtest+wf+stress ok")
+            self.reg.transition(eid, "VALIDATED", f"edge={edge:.4f} backtest+wf+stress ok")
             emit_event(edir, eid, "MODEL_VALIDATED", decision)
             decision["outcome"] = "VALIDATED"
         else:
             self.reg.transition(eid, "REJECTED",
-                                f"edge={edge:.4f} (min {min_edge}) backtest_ok={bt_ok}")
+                                f"edge={edge:.4f} (min {min_edge}) backtest_ok={bt_ok} "
+                                f"wf_ok={wf_ok} stress_ok={st_ok}")
             emit_event(edir, eid, "GOVERNANCE_REJECTED", decision)
             decision["outcome"] = "REJECTED"
         with open(os.path.join(edir, "governance.json"), "w") as f:
