@@ -16,7 +16,8 @@ Source: `docs/audit/core-backend-audit.md` (108 requirements). No code changed i
 - Acceptance: new exp differs after a REJECTED run for a recorded reason; unit test with fixture histories; no duplicate IDs; budgets respected.
 - Verify: synthetic histories + one tiny live loop. Cost: MEDIUM. Deps: none.
 
-### P1-2. Model below baseline; no converged retrain (D15, training readiness)
+### P1-2.
+- Status (Phase 3): unchanged implementation; re-verified via convergence tests (no code change needed). Model below baseline; no converged retrain (D15, training readiness)
 - Status (Phase 2): IMPLEMENTED_VERIFIED (synthetic). `LogRegLBFGS` solver with
   convergence flag, validation-only early stopping, base-rate floor, run
   diagnosis (UNDERFIT/OVERFIT/INCONCLUSIVE/FAILED/CONVERGED), manifest fields;
@@ -28,7 +29,8 @@ Source: `docs/audit/core-backend-audit.md` (108 requirements). No code changed i
 - Acceptance: val loss ≈ base-rate; OOS reported honestly; still CANDIDATE unless gates pass.
 - Verify: manifest + metrics inspection. Cost: LOW (CPU minutes).
 
-### P1-3. Walk-forward/stress not in governance (H4)
+### P1-3.
+- Status (Phase 3): unchanged; re-verified gate modes live on synthetic bars. Walk-forward/stress not in governance (H4)
 - Status (Phase 2): IMPLEMENTED_VERIFIED (synthetic + fixture). Gate script
   `--walkforward`/`--stress` modes; orchestrator runs both post-base-gate
   with budgets; infra errors → FAILED, poor results → REJECTED with reason;
@@ -40,7 +42,8 @@ Source: `docs/audit/core-backend-audit.md` (108 requirements). No code changed i
 - Acceptance: unit test with fixture splits; gate blocks a cherry-picked single-split winner.
 - Verify: targeted tests + one synthetic loop. Cost: LOW.
 
-### P1-4. Gateway timeout + response-schema validation (B4, B5, B9)
+### P1-4.
+- Status (Phase 3): unchanged; re-verified (12/12 gateway tests). Gateway timeout + response-schema validation (B4, B5, B9)
 - Status (Phase 2): IMPLEMENTED_VERIFIED. AbortSignal deadline, bounded
   retries (5xx/429 only, backoff 100/400/1600ms), strict content schema,
   input cap, classified `GatewayError`s, attempts/errorCode audit fields.
@@ -50,7 +53,8 @@ Source: `docs/audit/core-backend-audit.md` (108 requirements). No code changed i
 - Acceptance: deadline test with fake clock/hung fetch; malformed-body test.
 - Verify: gateway tests only. Cost: LOW.
 
-### P1-5. Qwen operational wiring (B1, B8)
+### P1-5.
+- Status (Phase 3): unchanged; re-verified (interpreter tests). Live probe still deferred. Qwen operational wiring (B1, B8)
 - Status (Phase 2): IMPLEMENTED_VERIFIED (stubbed; live probe explicitly
   deferred). `gatewayInterpreter` factory + per-agent policy (fundamental
   only by default); research boundary untouched (lint clean); deterministic
@@ -61,7 +65,8 @@ Source: `docs/audit/core-backend-audit.md` (108 requirements). No code changed i
 - Acceptance: stub-interpreter test + live manual probe (not CI).
 - Verify: unit tests. Cost: LOW.
 
-### P1-6. Eligibility refresh worker + rule tracking (L2, L3)
+### P1-6.
+- Status (Phase 3): unchanged (approved-portion module); authoritative list pending U2. Eligibility refresh worker + rule tracking (L2, L3)
 - Status (Phase 2): PARTIAL (approved portion only). Pure
   seed/validate/resolve module with source/as_of/version provenance and
   stale→UNKNOWN fail-closed; full regulatory-intel worker remains Phase 3+
@@ -72,7 +77,8 @@ Source: `docs/audit/core-backend-audit.md` (108 requirements). No code changed i
 - Acceptance: refresh updates `as_of`; stale entry forces UNKNOWN; boundary tests unchanged.
 - Verify: fixture-driven worker test. Cost: MEDIUM.
 
-### P1-7. Local API + token auth (M1, M2, A6)
+### P1-7.
+- Status (Phase 3): unchanged; re-verified via API tests in this phase. Local API + token auth (M1, M2, A6)
 - Status (Phase 2): IMPLEMENTED_VERIFIED (localhost only). Stdlib-only
   `aurix_ai.api`: bearer token (env, ≥16 chars, fail closed), loopback-only
   bind, per-IP rate limit, 64 KiB cap, redacted audit log, generic errors;
@@ -84,7 +90,8 @@ Source: `docs/audit/core-backend-audit.md` (108 requirements). No code changed i
 - Acceptance: auth rejection test, route tests, no broker/risk exposure.
 - Verify: targeted API tests. Cost: MEDIUM.
 
-### P1-8. Live-source research connectors or explicit scope cut (G2)
+### P1-8.
+- Status (Phase 3): unchanged; decision stands. Live-source research connectors or explicit scope cut (G2)
 - Status (Phase 2): DECIDED (intake-only cut). Decision record
   `docs/audit/research-connectors-decision.md`; no scraping, no new
   connectors, no credentials.
@@ -96,17 +103,17 @@ Source: `docs/audit/core-backend-audit.md` (108 requirements). No code changed i
 
 ## P2 gaps (integration/reliability/validation)
 
-- **P2-1.** Training→research read-back (E5): outcome summaries into research context; depends on P1-1.
-- **P2-2.** akpkg encryption (E6): spec-deferred to Phase 11; implement when phase arrives.
-- **P2-3.** Laya pipeline role: installed + proven, unused; define advisory role or cut scope. LOW.
-- **P2-4.** NSE holiday calendar + IST sessions (F7): 45-gap evidence; engine treats holidays as sessions. MEDIUM.
-- **P2-5.** ISIN-anchored identity (F4) + delisted/survivorship source (F5): adopt universe/delisted feed. MEDIUM.
-- **P2-6.** Adjusted-price default path (H8): parquet reader justification or eod2-adjusted default. LOW.
+- **P2-1.** DONE (Phase 3): research-ingest.ts imports validated questions/hypotheses/conclusions via propose/validate/commit; idempotent; 4 tests. Training→research read-back (E5): outcome summaries into research context; depends on P1-1.
+- **P2-2.** BLOCKED (Phase 3, unchanged): akpkg encryption needs a key-management decision (password-derived vs device key, rotation, recovery). Export determinism + tamper detection verified; no crypto invented.
+- **P2-3.** DECIDED (Phase 3, deferred): Laya stays OUT of the numerical loop until a defined task with measurable acceptance criteria and resource justification exists. Revisit only with: (a) named decision task (classification/scoring/ranking), (b) metric + baseline, (c) VRAM budget proof on the 4GB box alongside Ollama. No code change.
+- **P2-4.** PARTIAL (Phase 3): calendar mechanics + holiday exclusion tested with labeled fixture lists; NO authoritative NSE list vendored (dates must not be invented) — pending U2 decision.
+- **P2-5.** DECIDED pending source (Phase 3): no ISIN join added — providers do not publish ISINs on the fetched rows and inventing mappings is forbidden. Needs approved delisted/universe source; eod2 isin map is a candidate, not yet adopted.
+- **P2-6.** DECIDED pending approval (Phase 3): raw remains the default representation; eod2-adjusted path exists and is validated but switching the default changes every downstream number — needs explicit approval.
 - **P2-7.** Portfolio↔execution reconciliation proof (I2). LOW.
 - **P2-8.** Kill-switch live re-verification (J4) + secure-error audit (M4 secure errors). LOW.
-- **P2-9.** Regime detection locate-or-build (G4) + research→strategy live handoff test (G5). MEDIUM.
-- **P2-10.** Backup/restore tooling for ledgers/registries (P4). LOW.
-- **P2-11.** TUI real-market soak + no-window OS-level check (N3/N8). LOW.
+- **P2-9.** PARTIAL (Phase 3): regime detection LOCATED and wired (classifyRegime + applicability gate in signals path); research→strategy handoff remains a documented field mapping (hypothesis records carry model/hyperparameters/methodology/baseline), no live handoff test — needs approved consumer.
+- **P2-10.** DONE (Phase 3): aurix_ai/backup.py (metadata default, optional weights; checksum manifest; verify; overwrite-refusing restore) + 3 tests.
+- **P2-11.** PARTIAL (Phase 3): headless soak test green; found+fixed real hang (Windows isatty()=True with redirected stdin → --non-interactive deterministic path). No-window flags mock-asserted; live-market soak still open.
 - **P2-12.** Cross-service event integration + compat matrix (A3/A9). MEDIUM.
 
 ## P3 gaps (nonessential)

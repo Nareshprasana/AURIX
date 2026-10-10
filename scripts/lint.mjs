@@ -81,7 +81,7 @@ for (const rel of KITE_FILES) {
   }
 }
 // Knowledge service owns graph writes: no LLM/broker/training/network imports.
-const KNOWLEDGE_FILES = ['apps/knowledge-service/src/index.ts', 'apps/knowledge-service/src/store.ts', 'apps/knowledge-service/src/tables.ts', 'apps/knowledge-service/src/policy.ts', 'apps/knowledge-service/src/secrets.ts', 'apps/knowledge-service/src/hash.ts', 'apps/knowledge-service/src/export.ts', 'apps/knowledge-service/src/sqlite.ts'];
+const KNOWLEDGE_FILES = ['apps/knowledge-service/src/index.ts', 'apps/knowledge-service/src/store.ts', 'apps/knowledge-service/src/tables.ts', 'apps/knowledge-service/src/policy.ts', 'apps/knowledge-service/src/secrets.ts', 'apps/knowledge-service/src/hash.ts', 'apps/knowledge-service/src/export.ts', 'apps/knowledge-service/src/sqlite.ts', 'apps/knowledge-service/src/research-ingest.ts'];
 for (const rel of KNOWLEDGE_FILES) {
   const p = join(ROOT, rel);
   if (!existsSync(p)) continue;

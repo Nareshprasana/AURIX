@@ -134,3 +134,21 @@ def test_aurix_cmd_covers_all_commands():
     assert "auto-stop" in src
     assert "auto-train" in src
     assert "auto-logs" in src
+
+
+def test_interactive_headless_soak(tmp_path):
+    """Non-interactive launch prints authoritative state JSON and exits 0.
+    Uses the explicit flag because Windows consoles can report isatty()=True
+    even with redirected stdin (verified); the flag is the deterministic
+    headless path. No keys, no hangs, no side effects."""
+    import subprocess
+    import sys
+    env = dict(os.environ, AURIX_RUNS_DIR=str(tmp_path), PYTHONIOENCODING="utf-8")
+    r = subprocess.run([sys.executable, "-m", "aurix_ai.cli", "interactive",
+                        "--runs", str(tmp_path), "--non-interactive"],
+                       capture_output=True, text=True, timeout=60,
+                       stdin=subprocess.DEVNULL, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       env=env)
+    assert r.returncode == 0, r.stderr[-2000:]
+    state = json.loads(r.stdout)
+    assert state["health"] == "IDLE" and state["experiment_id"] is None

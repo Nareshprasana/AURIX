@@ -595,7 +595,8 @@ def _cmd_interactive(args) -> int:
 
     return run_interactive(build, {"start": start, "stop": stop,
                                   "events": events, "system": system,
-                                  "counts": counts})
+                                  "counts": counts},
+                           force_non_interactive=args.non_interactive)
 
 
 def _spawn_supervisor(root: str, interval: int) -> int:
@@ -918,7 +919,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("auto-stop"); s.add_argument("--runs", default=None); s.add_argument("--timeout", type=int, default=300); s.set_defaults(fn=_cmd_auto_stop)
     s = sub.add_parser("auto-state"); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_auto_state)
     s = sub.add_parser("auto-logs"); s.add_argument("--runs", default=None); s.add_argument("--last", type=int, default=50); s.set_defaults(fn=_cmd_auto_logs)
-    s = sub.add_parser("interactive"); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_interactive)
+    s = sub.add_parser("interactive"); s.add_argument("--runs", default=None); s.add_argument("--non-interactive", action="store_true"); s.set_defaults(fn=_cmd_interactive)
     s = sub.add_parser("auto-start"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_start)
     s = sub.add_parser("auto-supervise"); s.add_argument("--runs", default=None); s.add_argument("--interval", type=int, default=30); s.set_defaults(fn=_cmd_auto_supervise)
     s = sub.add_parser("auto-worker"); s.add_argument("--exp-dir", required=True); s.add_argument("--resume", action="store_true"); s.set_defaults(fn=_cmd_auto_worker)

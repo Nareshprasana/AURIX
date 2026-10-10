@@ -13,8 +13,8 @@ registry, knowledge, or broker systems.
 2. `classify_outcome` — 8 classes. Infra problems are never model verdicts;
    poor valid numbers are never infra errors.
 3. Conclusions persist as `OBSERVATION` records in `research.jsonl`
-   (same shape as `knowledge_refs.jsonl`; import-ready for the TS knowledge
-   service, which does not yet ingest them — P2).
+   (same shape as `knowledge_refs.jsonl`; ingested into the authoritative
+   knowledge service by `research-ingest.ts` via propose/validate/commit).
 4. `derive_questions` — deterministic rules (baseline → adjustment →
    reliability → budget → exploration), deduplicated by content hash.
 5. `propose_experiment` — supported space only
@@ -49,3 +49,20 @@ semantics. Research mode never touches trade execution.
 - Walk-forward/stress gates, Qwen wiring, eligibility refresh, local API,
   live research connectors, model convergence: other P1s per
   `docs/audit/core-backend-gap-plan.md`.
+
+## Knowledge ingestion and strategy handoff (Phase 3)
+
+Ingestion: \pps/knowledge-service/src/research-ingest.ts\ maps research
+records to memory writes through propose/validate/commit — question and
+conclusion to OBSERVATION, hypothesis to HYPOTHESIS, all under category
+\strategy\ with deterministic keys esearch:{kind}:{id}\, source
+\urix-research-agent\, and record-owned evidence refs (experiment IDs,
+dataset versions, fingerprints, checksums). Re-ingestion hits the existing
+DUPLICATE_MEMORY rejection and is recorded as skipped. FACT is never
+asserted; nothing here promotes models or strategies.
+
+Handoff contract (documented mapping, no live consumer yet): hypothesis
+records carry model, hyperparameters, methodology, baseline, budget, and
+fingerprint — the fields a strategy-experiment brief needs. Missing required
+strategy fields must be reported as gaps, never invented. LLM narratives are
+never treated as verified market facts.

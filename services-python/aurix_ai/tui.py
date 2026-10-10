@@ -214,10 +214,16 @@ def clear():
     os.system("cls" if os.name == "nt" else "clear")
 
 
-def run_interactive(build_state, actions, interval_s: float = 2.0) -> int:
+def run_interactive(build_state, actions, interval_s: float = 2.0,
+                    force_non_interactive: bool = False) -> int:
     """Main loop. build_state() -> TrainingState dict. actions: callbacks
-    {start, stop, system} provided by the CLI layer (same fns as commands)."""
-    if not sys.stdin.isatty():
+    {start, stop, system} provided by the CLI layer (same fns as commands).
+
+    Non-tty stdin prints the authoritative state as JSON and exits. Note:
+    on Windows a console can report isatty()=True even with redirected
+    stdin, so --non-interactive exists as the deterministic headless path.
+    """
+    if force_non_interactive or not sys.stdin.isatty():
         print(json.dumps(build_state(), indent=2, default=str))
         return 0
     view = "menu"
