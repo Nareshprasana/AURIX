@@ -18,6 +18,12 @@ adjustment/survivorship infrastructure upstream; eod2_data gives dependency-free
 CSV cross-validation. Provider interface (`HistoricalDataProvider.fetch`)
 stays vendor-neutral so NSEDATA4ME can be added later without touching callers.
 
+U4 note (approved Phase 4 2026-10-13): for TRAINING dataset builds the
+default representation is eod2-adjusted (see Price-basis default above); the
+table's PRIMARY/SECONDARY verdicts describe source evaluation breadth, not
+the training default. Raw tej-bazaar remains the audit-archive
+representation.
+
 ## Schema (validated rows)
 
 `symbol, date(YYYY-MM-DD), open, high, low, close, volume, turnover, trades,
@@ -78,5 +84,29 @@ are committed.
   redistribution claimed. `LICENSE_STATUS(data-redistribution) = UNKNOWN`
   for third-party sharing.
 - eod2_data: no explicit license file found; NSE terms apply; local use only.
+- U3 license review (Phase 4, 2026-10-13, evidence-backed): `LICENSE` absent
+  from `BennyThadikaran/eod2_data` (verified 404 on
+  `.../main/LICENSE`; repo file list shows no license); README states data is
+  sourced from NSE website daily reports with no license grant; the sibling
+  `BennyThadikaran/eod2` project is GPL-3.0, which covers code, not the
+  NSE-sourced data. Result: compatibility for ISIN-map anchoring CANNOT be
+  claimed → U3 stays DEFERRED, no ISIN join adopted, existing eod2 CSV use
+  unchanged (local-only) with no expansion.
 - NSEDATA4ME is GPL-3.0 (not vendored; kept at arm's length as a future
   optional source to avoid license contagion in this MIT-licensed repo).
+
+## Price-basis default (U4, approved Phase 4 2026-10-13)
+
+- `history-build --provider` now defaults to `eod2` (split/bonus-adjusted).
+  tej-bazaar raw remains available via `--provider tej` and `history-fetch`
+  for audit archives. Only the default moved; both paths already coexisted.
+- Every dataset manifest records `adjustment_policy` + `source`; experiments
+  submitted via `aurix train` additionally carry denormalized `price_basis`
+  + `data_source` fields (traceable without a join).
+- Raw and adjusted builds MUST use distinct `--id` values (version IDs hash
+  the spec, not the price basis; same-spec collisions fail safely with
+  DATASET_CORRUPT rather than mixing). Comparisons must use compatible bases.
+- Re-baselining after the switch creates NEW versioned results; historical
+  proof artifacts are never overwritten. No real-market retraining or
+  backtests were run in Phase 4 (not authorized); recomputed proof metrics
+  remain a separately-authorized future operation.

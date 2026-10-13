@@ -1,11 +1,20 @@
-# AURIX Master Spec — Proposed Reconstruction v0.1 (DRAFT, NOT APPROVED)
+# AURIX Master Spec — Proposed Reconstruction v0.2 (APPROVED WITH AMENDMENTS)
 
-Status: PROPOSAL for review. The standalone Master Spec v1.0 is not in the
-repository; this document reconstructs its requirements from `docs/architecture.md`
-v1.0.1 (which cites Master Spec §§), phase plans/audits, and verified behavior.
-Nothing here is approved policy. UNRESOLVED items need explicit decisions.
-Provisional policy (e.g. governance thresholds) is marked as such and must not
-be treated as approved.
+Status: APPROVED WITH AMENDMENTS per Phase-4 user authorization (2026-10-13,
+baseline `69a9251`). NOT fully authoritative: U2 (holiday list) and U3 (ISIN
+source) remain without vendored artifacts, and U5/U6/U10 remain deferred —
+see UNRESOLVED items below. Requirement IDs (R1–R15, U1–U10) and traceability
+are preserved from v0.1; only approval status and the three recorded
+amendments changed. The standalone Master Spec v1.0 is still not in the
+repository; §-level citations remain per `docs/architecture.md` v1.0.1.
+
+Version history:
+- v0.1 (DRAFT, NOT APPROVED): initial reconstruction for review.
+- v0.2 (APPROVED WITH AMENDMENTS, 2026-10-13): records the three approved
+  amendments — (1) R11 thresholds: PROVISIONAL → APPROVED promotion floors
+  per U8 with mandatory re-calibration trigger; (2) R7 connector scope:
+  confirmed as the decided intake-only cut per U7; (3) Laya role: recorded as
+  deferred per U6. No R-text altered; unresolved requirements kept explicit.
 
 Traceability key: [A§x] = architecture section; [P1..P8] = phase audits;
 [code] = implementation; [T] = targeted test evidence.
@@ -43,6 +52,8 @@ deterministic `.akpkg` export with tamper detection. [P2][T]
 Specialist agents produce structured observations/conclusions with evidence
 refs; never trade decisions, orders, or broker calls. LLM input is optional
 and sandboxed (secret scan, MODEL_UNAVAILABLE fallback). [P5][T]
+Connector scope is a DECIDED cut per U7 (upheld Phase 4): intake-only;
+any future live connector needs an approved source, license, and ToS review.
 
 ## R8. Strategy/backtest determinism [A§10]
 Versioned datasets with point-in-time discipline, no look-ahead, cost/slippage/
@@ -61,9 +72,16 @@ with resume; candidate-locked registry; explicit promotion only. [proof][T]
 ## R11. Experiment governance [A§14]
 OOS edge vs baseline + backtest + walk-forward + stress gates; infra failures
 classified FAILED (retryable), poor results REJECTED (terminal); accuracy is
-never profitability. Threshold values below are PROVISIONAL policy, not spec:
+never profitability. Threshold values are APPROVED promotion floors per U8
+(Phase 4, 2026-10-13), not spec quality claims:
 `min_oos_edge_vs_baseline: 0.01`, `min_median_sharpe: 0.0` (floor),
-`max_backtest_drawdown_pct: 10.0`. UNRESOLVED: approve or replace these floors.
+`max_backtest_drawdown_pct: 10.0`. The 0.0 Sharpe floor is a non-negativity
+sanity check on median out-of-window risk-adjusted return, NOT evidence of
+profitability. Mandatory re-calibration trigger: once a real VALIDATED
+candidate exists, these floors must be re-approved against observed data;
+thresholds are never tuned on the test set. UNSPECIFIED (no value invented):
+the minimum evaluated-window count for a statistically meaningful median
+Sharpe; the engine enforces only a non-vacuity floor (windows ≥ 1).
 
 ## R12. Autonomous research loop [A§14]
 Outcome-driven planning (read → question → hypothesize → validate → submit →
@@ -85,13 +103,31 @@ Opaque-package device transfer with conflict handling; crash→restart→reconci
 for execution, sync, and training supervision. [P3][T]
 
 ## UNRESOLVED items (need explicit decisions)
-- U1. Regulatory-intel full worker: architecture defers to Phase 3+;Refresh cadence, authoritative NSE source, and rule-tracking scope undecided.
-- U2. Authoritative NSE holiday calendar list: mechanics support explicit lists; no approved list vendored (must not invent dates).
-- U3. ISIN-anchored instrument identity + delisted/survivorship source: not selected.
-- U4. Adjusted-price default policy (raw vs eod2-adjusted): needs approval.
-- U5. `.akpkg` encryption: deferred to Phase 11 per code comment; key management undesigned.
-- U6. Laya role: advisory integration vs removal from architecture.
-- U7. Live research connectors: intake-only cut recorded (`docs/audit/research-connectors-decision.md`); revisit needs sourced, licensed feed.
-- U8. Walk-forward/stress threshold values (see R11): provisional.
-- U9. Frontend authorization model beyond local token: deferred to frontend phase.
-- U10. Production model existence: no VALIDATED model; registry holds CANDIDATEs only.
+- U1. Regulatory-intel full worker: APPROVED Phase 4 as curated seed file
+  (`config/regulatory-seed.v1.json`, sources + `as_of` recorded, refresh tied
+  to releases); full worker remains Phase 3+ scope, no scraping.
+- U2. Authoritative NSE holiday calendar list: APPROVED in principle, BLOCKED
+  on acquisition — no NSE-published list could be verified this phase (NSE
+  publication page unreachable); dates must not be invented. Mechanics accept
+  explicit lists (tested). Re-entry: vendor the NSE-published list per year
+  with source URL + year version recorded.
+- U3. ISIN-anchored instrument identity + delisted/survivorship source:
+  DEFERRED — eod2 license review FAILED (no license file in `eod2_data`;
+  data sourced from NSE reports with no grant; EOD2 project code is GPL-3.0,
+  which licenses code, not the NSE-sourced data). No ISIN join adopted;
+  existing eod2 CSV use stays local-only, no expansion. Never invent mappings.
+- U4. Adjusted-price default policy (raw vs eod2-adjusted): APPROVED Phase 4 —
+  eod2-adjusted is the training-data default; raw retained for audit archives
+  with provenance; re-baselining creates new traceable results, never rewrites
+  history. Residual: eod2 dividends unadjusted.
+- U5. `.akpkg` encryption: DEFERRED to Phase 11 (unchanged).
+- U6. Laya role: DEFERRED with re-entry bar unchanged (named task + baseline
+  + 4GB coexistence proof); package stays vendored but unwired.
+- U7. Live research connectors: DECIDED intake-only cut, UPHELD Phase 4.
+- U8. Walk-forward/stress threshold values (see R11): APPROVED as promotion
+  floors with re-calibration trigger (Phase 4).
+- U9. Frontend authorization model: APPROVED bearer-on-loopback for the
+  local-only initial frontend (Phase 4); revisit only if scope leaves localhost.
+- U10. Production model existence: DEFERRED — real-market retraining remains
+  a separate future operation requiring explicit authorization; no VALIDATED
+  model exists.

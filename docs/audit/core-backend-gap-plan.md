@@ -30,6 +30,17 @@ Source: `docs/audit/core-backend-audit.md` (108 requirements). No code changed i
 - Verify: manifest + metrics inspection. Cost: LOW (CPU minutes).
 
 ### P1-3.
+- Status (Phase 4): APPROVED + WIRED (U8). Floors (`min_oos_edge 0.01`,
+  `min_median_sharpe 0.0` sanity-check floor, `max_backtest_dd 10.0`) recorded
+  in `config/ai-policy.v1.yaml` with re-calibration trigger; `govern()`
+  records `policy_version` + threshold snapshot in every `governance.json`;
+  malformed/missing gate numerics raise BACKTEST_FAILED (FAILED, retryable),
+  vacuous ok-results and threshold breaches REJECTED; verified by 4
+  deterministic synthetic demonstrations (fail-gate→REJECTED,
+  infra→FAILED-not-REJECTED, malformed/vacuous→never-VALIDATED,
+  all-pass→VALIDATED-only). Blocker documented, nothing invented: the
+  statistical minimum-windows threshold is UNSPECIFIED (engine enforces only
+  non-vacuity windows>=1).
 - Status (Phase 3): unchanged; re-verified gate modes live on synthetic bars. Walk-forward/stress not in governance (H4)
 - Status (Phase 2): IMPLEMENTED_VERIFIED (synthetic + fixture). Gate script
   `--walkforward`/`--stress` modes; orchestrator runs both post-base-gate
@@ -66,6 +77,11 @@ Source: `docs/audit/core-backend-audit.md` (108 requirements). No code changed i
 - Verify: unit tests. Cost: LOW.
 
 ### P1-6.
+- Status (Phase 4): APPROVED-scope implemented (U1). Curated seed file
+  `config/regulatory-seed.v1.json` (version + as_of + per-release cadence +
+  honest empty-coverage disclaimer; zero invented rules) + loader/fail-closed
+  tests (3/3 green); full regulatory-intel worker remains Phase 3+, no
+  scraping. Stale→UNKNOWN behavior unchanged and re-verified.
 - Status (Phase 3): unchanged (approved-portion module); authoritative list pending U2. Eligibility refresh worker + rule tracking (L2, L3)
 - Status (Phase 2): PARTIAL (approved portion only). Pure
   seed/validate/resolve module with source/as_of/version provenance and
@@ -78,6 +94,13 @@ Source: `docs/audit/core-backend-audit.md` (108 requirements). No code changed i
 - Verify: fixture-driven worker test. Cost: MEDIUM.
 
 ### P1-7.
+- Status (Phase 4): APPROVED + HARDENED (U9, localhost-only). Malformed
+  `interval`/`timeout` bodies now coerce under range checks and return
+  controlled 400s (no uncaught TypeError/dropped connection); loopback-only
+  bind, fail-closed token, per-IP rate limit, 64 KiB cap, redacted audit all
+  re-verified by test; 8-way parallel localhost probe confirms
+  serialized-but-correct responses. Single-threaded serialization documented
+  as an operational property, NOT a security guarantee. No new routes.
 - Status (Phase 3): unchanged; re-verified via API tests in this phase. Local API + token auth (M1, M2, A6)
 - Status (Phase 2): IMPLEMENTED_VERIFIED (localhost only). Stdlib-only
   `aurix_ai.api`: bearer token (env, ≥16 chars, fail closed), loopback-only
@@ -91,6 +114,9 @@ Source: `docs/audit/core-backend-audit.md` (108 requirements). No code changed i
 - Verify: targeted API tests. Cost: MEDIUM.
 
 ### P1-8.
+- Status (Phase 4): UPHELD (U7). `node scripts/lint.mjs` green;
+  `apps/research-agents/test/security.test.ts` 3/3 green; decision record
+  unchanged. No new connectors, no scraping, no credentials.
 - Status (Phase 3): unchanged; decision stands. Live-source research connectors or explicit scope cut (G2)
 - Status (Phase 2): DECIDED (intake-only cut). Decision record
   `docs/audit/research-connectors-decision.md`; no scraping, no new
@@ -106,9 +132,24 @@ Source: `docs/audit/core-backend-audit.md` (108 requirements). No code changed i
 - **P2-1.** DONE (Phase 3): research-ingest.ts imports validated questions/hypotheses/conclusions via propose/validate/commit; idempotent; 4 tests. Training→research read-back (E5): outcome summaries into research context; depends on P1-1.
 - **P2-2.** BLOCKED (Phase 3, unchanged): akpkg encryption needs a key-management decision (password-derived vs device key, rotation, recovery). Export determinism + tamper detection verified; no crypto invented.
 - **P2-3.** DECIDED (Phase 3, deferred): Laya stays OUT of the numerical loop until a defined task with measurable acceptance criteria and resource justification exists. Revisit only with: (a) named decision task (classification/scoring/ranking), (b) metric + baseline, (c) VRAM budget proof on the 4GB box alongside Ollama. No code change.
-- **P2-4.** PARTIAL (Phase 3): calendar mechanics + holiday exclusion tested with labeled fixture lists; NO authoritative NSE list vendored (dates must not be invented) — pending U2 decision.
-- **P2-5.** DECIDED pending source (Phase 3): no ISIN join added — providers do not publish ISINs on the fetched rows and inventing mappings is forbidden. Needs approved delisted/universe source; eod2 isin map is a candidate, not yet adopted.
-- **P2-6.** DECIDED pending approval (Phase 3): raw remains the default representation; eod2-adjusted path exists and is validated but switching the default changes every downstream number — needs explicit approval.
+- **P2-4.** APPROVED-in-principle, BLOCKED on acquisition (Phase 4, U2):
+  NSE publication page unreachable from this environment, so no verified list
+  could be vendored and no dates were invented. Calendar mechanics + holiday
+  exclusion remain tested with labeled fixtures; U1 seed file
+  (`config/regulatory-seed.v1.json`) created with version/as_of/cadence.
+  Re-entry: vendor the NSE-published list per year with source URL + version.
+- **P2-5.** BLOCKED, unchanged scope (Phase 4, U3): eod2 license review
+  FAILED — no LICENSE in `eod2_data` (404 verified), data ex-NSE reports
+  with no grant, EOD2-project GPL-3.0 covers code not data. No ISIN join
+  adopted; mappings never invented; existing eod2 CSV use stays local-only.
+  Needs an approved delisted/universe source.
+- **P2-6.** IMPLEMENTED (Phase 4, U4): `history-build --provider` defaults to
+  `eod2` (split-bonus-adjusted); tej raw retained for audit archives;
+  manifests record `adjustment_policy` + `source`; experiments carry
+  denormalized `price_basis`/`data_source`; default-policy + basis-stability
+  tests green. Re-baselining (recomputed proof metrics as NEW artifacts) is a
+  separately-authorized future op — no real-market runs this phase; originals
+  preserved (refuse-overwrite intact).
 - **P2-7.** Portfolio↔execution reconciliation proof (I2). LOW.
 - **P2-8.** Kill-switch live re-verification (J4) + secure-error audit (M4 secure errors). LOW.
 - **P2-9.** PARTIAL (Phase 3): regime detection LOCATED and wired (classifyRegime + applicability gate in signals path); research→strategy handoff remains a documented field mapping (hypothesis records carry model/hyperparameters/methodology/baseline), no live handoff test — needs approved consumer.
