@@ -105,3 +105,38 @@ def test_history_no_broker_surface():
     for pat in ("placeOrder", "BrokerPort", "kiteconnect", "api_secret",
                 "access_token", "execution-service"):
         assert pat not in src
+
+
+def test_history_build_defaults_to_adjusted_source():
+    """U4: the training-dataset selection path defaults to eod2-adjusted."""
+    from aurix_ai.cli import build_parser
+    from aurix_ai.history import Eod2Provider
+    args = build_parser().parse_args(
+        ["history-build", "--symbols", "RELIANCE", "--from-date", "2020-01-01",
+         "--to-date", "2020-02-01", "--out", "o"])
+    assert args.provider == "eod2"
+    assert Eod2Provider.adjustment_policy == "split-bonus-adjusted"
+
+
+def test_write_dataset_records_basis_and_keeps_stable_ids(tmp_path):
+    """U4: manifests record the price basis; IDs/checksums stay stable."""
+    from aurix_ai.datasets import (DatasetSpec, build_features_labels,
+                                   write_dataset)
+    rows = {}
+    for sym, seed in (("A", 3), ("B", 5)):
+        rep = validate_rows(_series(200, seed=seed))
+        rows[sym] = rep["clean"]
+    bars = to_training_bars(rows)
+    X, y, ts, inst = build_features_labels(bars, 5, 0.005)
+    spec = DatasetSpec(dataset_id="aurix-nse-daily", version="v1",
+                       instruments=("A", "B"), n_bars=400, seed=7,
+                       horizon_bars=5, threshold=0.005, start_ts=int(ts[0]))
+    extra = {"source": "eod2-data",
+             "source_ref": "BennyThadikaran/eod2_data@main",
+             "adjustment_policy": "split-bonus-adjusted"}
+    m1 = write_dataset(str(tmp_path), spec, X, y, ts, inst, extra=extra)
+    m2 = write_dataset(str(tmp_path), spec, X, y, ts, inst, extra=extra)
+    assert m1["adjustment_policy"] == "split-bonus-adjusted"
+    assert m1["source"] == "eod2-data"
+    assert m1["dataset_version"] == m2["dataset_version"]
+    assert m1["checksum_sha256"] == m2["checksum_sha256"]

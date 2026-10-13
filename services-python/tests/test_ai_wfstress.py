@@ -100,7 +100,7 @@ def test_rigged_winner_blocked_by_walkforward(tmp_path):
 def test_stress_breach_rejects(tmp_path):
     s, eid, edir = _governed_fixture(tmp_path, acc=0.80, base=0.50)
     s.extended_runner = lambda b, e, mode: (
-        {"ok": True, "median_test_sharpe": 1.5} if mode.startswith("walkforward")
+        {"ok": True, "median_test_sharpe": 1.5, "windows": 3} if mode.startswith("walkforward")
         else {"ok": True, "max_stressed_dd": 99.0})
     gates = {"min_oos_edge_vs_baseline": 0.01, "max_backtest_drawdown_pct": 10.0,
              "walkforward": {"enabled": True, "min_median_sharpe": 0.0},
@@ -145,3 +145,73 @@ def test_missing_wf_bars_fails_closed(tmp_path):
     with pytest.raises(Exception):
         s._extended_gate(eid, edir, os.path.join(s.root, "bars.json"),
                          "walkforward", {}, {})
+
+
+def _approved_gates(**over):
+    gates = {"policy_version": "ai-policy-v1-test",
+             "min_oos_edge_vs_baseline": 0.01, "max_backtest_drawdown_pct": 10.0,
+             "walkforward": {"enabled": True, "min_median_sharpe": 0.0},
+             "stress": {"enabled": True, "max_stressed_dd_pct": 10.0}}
+    gates.update(over)
+    return gates
+
+
+def test_malformed_gate_results_fail_closed(tmp_path):
+    """Missing/unparsable gate fields can never authorize VALIDATED: malformed
+    numeric results are infra failures (FAILED), vacuous ok-results reject."""
+    s, eid, edir = _governed_fixture(tmp_path, acc=0.80, base=0.50)
+    # ok:true but median missing -> FAILED (malformed), not VALIDATED.
+    s.extended_runner = lambda b, e, mode: (
+        {"ok": True} if mode.startswith("walkforward")
+        else {"ok": True, "max_stressed_dd": 1.0})
+    s.govern_eligible(_approved_gates())
+    assert s.reg.get(eid)["status"] == "FAILED"
+    # ok:true with zero evaluated windows -> REJECTED (vacuous), not VALIDATED.
+    import tempfile
+    with tempfile.TemporaryDirectory() as root:
+        from aurix_ai.orchestrate import ExperimentRegistry, Scheduler
+        reg = ExperimentRegistry(root)
+        rec = reg.submit({"dataset_dir": root, "dataset_version": "t",
+                          "model_type": "sgd-logloss",
+                          "hyperparameters": {"alpha": 0.0001}, "seed": 7,
+                          "epochs": 1, "device": "cpu",
+                          "backtest_bars": os.path.join(root, "bars.json")})
+        e2 = rec["experiment_id"]
+        ed2 = os.path.join(root, e2)
+        json.dump({"artifact_sha256": "abc"}, open(os.path.join(ed2, "manifest.json"), "w"))
+        json.dump({"accuracy": 0.80, "baseline_majority_accuracy": 0.50,
+                   "precision": 0.80, "recall": 0.80, "n": 200},
+                  open(os.path.join(ed2, "eval.json"), "w"))
+        json.dump(_bars(30), open(os.path.join(root, "bars.json"), "w"))
+        s3 = Scheduler(root, {"max_concurrent_training": 1},
+                       launcher=lambda d, r, detach=False: None,
+                       backtest_runner=lambda b, e: {"ok": True, "max_drawdown_pct": 1.0})
+        s3.extended_runner = lambda b, e, mode: (
+            {"ok": True, "median_test_sharpe": 1.5, "windows": 0}
+            if mode.startswith("walkforward")
+            else {"ok": True, "max_stressed_dd": 1.0})
+        s3.reg.transition(e2, "EVALUATED", "test")
+        s3.govern_eligible(_approved_gates())
+        assert s3.reg.get(e2)["status"] == "REJECTED"
+
+
+def test_validated_requires_all_gates_and_records_policy(tmp_path):
+    """A candidate reaches VALIDATED only when every required gate passes;
+    the verdict records policy version + threshold snapshot for audit."""
+    s, eid, edir = _governed_fixture(tmp_path, acc=0.80, base=0.50)
+    s.extended_runner = lambda b, e, mode: (
+        {"ok": True, "median_test_sharpe": 1.5, "windows": 3}
+        if mode.startswith("walkforward")
+        else {"ok": True, "max_stressed_dd": 1.0,
+              "scenarios": ["cost-x2", "friction-shock"]})
+    s.govern_eligible(_approved_gates())
+    assert s.reg.get(eid)["status"] == "VALIDATED"
+    gov = json.load(open(os.path.join(edir, "governance.json")))
+    assert gov["outcome"] == "VALIDATED"
+    assert gov["policy_version"] == "ai-policy-v1-test"
+    assert gov["gates"]["min_oos_edge_vs_baseline"] == 0.01
+    assert gov["gates"]["walkforward"]["min_median_sharpe"] == 0.0
+    assert gov["walkforward"]["median_test_sharpe"] == 1.5
+    assert gov["stress"]["scenarios"] == ["cost-x2", "friction-shock"]
+    assert os.path.exists(os.path.join(edir, "walkforward.json"))
+    assert os.path.exists(os.path.join(edir, "stress.json"))

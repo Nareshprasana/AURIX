@@ -147,3 +147,32 @@ def test_api_has_no_broker_or_risk_surface():
                 "kiteconnect", "api_secret", "access_token", "ModelRegistry",
                 "promote("):
         assert pat not in src, pat
+
+
+def test_malformed_interval_and_timeout_rejected(tmp_path):
+    srv = _serve(str(tmp_path))
+    try:
+        for bad in ("fast", [30], {"n": 30}, 30.5, True, "", 0, 99999):
+            code, out = _req(srv, "/v1/training/stop", method="POST",
+                             body={"timeout": bad})
+            assert code == 400, (bad, code, out)
+            assert "invalid timeout" in out["error"]
+        for bad in ("soon", [30], -5, 0):
+            code, out = _req(srv, "/v1/training/start", method="POST",
+                             body={"interval": bad, "datasets": "/nonexistent"})
+            assert code == 400, (bad, code, out)
+    finally:
+        srv.shutdown()
+
+
+def test_socket_concurrency_serialized_safely(tmp_path):
+    import concurrent.futures
+    srv = _serve(str(tmp_path))
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(lambda _: _req(srv, "/health"), range(8)))
+        assert all(code == 200 for code, _ in results)
+        bodies = [out for _, out in results]
+        assert all(b == {"status": "OK", "version": "v1"} for b in bodies)
+    finally:
+        srv.shutdown()

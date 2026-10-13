@@ -3,8 +3,12 @@
 Pipeline: provider -> raw local data -> validation -> quality gate
 (PASS/QUARANTINE/BLOCK) -> versioned immutable dataset -> training/backtest.
 
-Primary source: tej-bazaar edge (NSE bhavcopy-derived OHLCV, REST JSON).
-Secondary validation: eod2_data static adjusted CSVs (split/bonus adjusted).
+U4 APPROVED Phase 4 (2026-10-13): eod2 split/bonus-adjusted closes are the
+default training-data representation (`history-build --provider` defaults to
+eod2); tej-bazaar raw bhavcopy is retained for audit archives and explicit
+raw builds. Both representations already coexisted — only the default moved.
+Residual: eod2 dividends unadjusted. Re-baselining after the switch must
+create NEW traceable results; historical proof artifacts are never rewritten.
 Stdlib only (urllib/json/csv/hashlib). No broker, no secrets, no execution.
 
 Point-in-time rule: rows carry only what the source published for date T.

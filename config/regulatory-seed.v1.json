@@ -1,0 +1,15 @@
+{
+  "file": "config/regulatory-seed.v1.json",
+  "version": "regulatory-seed-v1",
+  "as_of": "2026-10-13",
+  "refresh_cadence": "per-release review (U1 approved scope; full regulatory-intel worker stays Phase 3+, no scraping)",
+  "coverage": "none-yet: no eligibility rows are asserted in this seed. Every instrument resolves UNKNOWN (fail-closed) until sourced rows are added in a release review. Nothing here is a tradability approval.",
+  "sources": [
+    {
+      "id": "nse-scope",
+      "url": "https://www.nseindia.com",
+      "note": "Exchange-scope reference only (NSE operates an equity segment; AURIX config exchange_scope=[NSE]). Not a rule source; per-rule source_url is required on every row added later."
+    }
+  ],
+  "rules": []
+}

@@ -368,7 +368,8 @@ def _load_gates() -> tuple:
     auto = policy.get("automation", {})
     sched = {"max_concurrent_training": int(auto.get("max_concurrent_training", 1)),
              "heartbeat_timeout_s": int(auto.get("heartbeat_timeout_s", 600))}
-    gates = {"min_oos_edge_vs_baseline": float(auto.get("min_oos_edge_vs_baseline", 0.01)),
+    gates = {"policy_version": str(policy.get("version", "unknown")),
+             "min_oos_edge_vs_baseline": float(auto.get("min_oos_edge_vs_baseline", 0.01)),
              "max_backtest_drawdown_pct": float(auto.get("max_backtest_drawdown_pct", 10.0)),
              "walkforward": dict(auto.get("walkforward", {}) or {}),
              "stress": dict(auto.get("stress", {}) or {})}
@@ -745,7 +746,14 @@ def _auto_train_impl(runs=None, datasets=None, interval=30, once=False) -> dict:
             d = {"dataset_dir": ddir, "dataset_version": manifest["dataset_version"],
                  "model_type": ml.get("model_type", "sgd-logloss"),
                  "hyperparameters": hp_seed, "seed": seed, "epochs": epochs,
-                 "device": "cpu"}
+                 "device": "cpu",
+                 # U4 traceability: record the selected price basis on the
+                 # experiment itself (dataset_version -> dataset manifest ->
+                 # adjustment_policy is the full chain; this denormalized
+                 # copy keeps governance/eval readable without a join).
+                 # "unknown" when the dataset predates basis recording.
+                 "price_basis": manifest.get("adjustment_policy", "unknown"),
+                 "data_source": manifest.get("source", "unknown")}
             if backtest_bars:
                 d["backtest_bars"] = backtest_bars
             try:
@@ -908,7 +916,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--to-date", required=True); s.add_argument("--provider", default="tej", choices=["tej", "eod2", "both"])
     s.add_argument("--out", required=True); s.set_defaults(fn=_cmd_history_fetch)
     s = sub.add_parser("history-build"); s.add_argument("--symbols", required=True); s.add_argument("--from-date", required=True)
-    s.add_argument("--to-date", required=True); s.add_argument("--provider", default="tej", choices=["tej", "eod2"])
+    s.add_argument("--to-date", required=True); s.add_argument("--provider", default="eod2", choices=["tej", "eod2"])
     s.add_argument("--out", required=True); s.add_argument("--id", default="aurix-nse-daily")
     s.add_argument("--horizon", type=int, default=5); s.add_argument("--threshold", type=float, default=0.005)
     s.add_argument("--cross-check", action="store_true"); s.set_defaults(fn=_cmd_history_build)

@@ -66,12 +66,23 @@ automation:
   default_epochs: 5
   heartbeat_timeout_s: 600
   # Governance gates (deterministic; accuracy != profitability, backtest required).
+  # U8 APPROVED Phase 4 (2026-10-13): the three floors below are promotion
+  # gates, NOT quality claims. min_median_sharpe 0.0 is a non-negativity
+  # sanity check on median out-of-window risk-adjusted return — never evidence
+  # of profitability. Mandatory re-calibration trigger: once a real VALIDATED
+  # candidate exists, re-approve these values against observed data; never
+  # tune thresholds on the test set. Verdicts record policy_version + the
+  # threshold snapshot in governance.json for audit.
   min_oos_edge_vs_baseline: 0.01
   max_backtest_drawdown_pct: 10.0
   require_backtest_completed: true
   # Walk-forward gate: rolling windows over the gate dataset. Thresholds are
   # explicit policy (not spec claims): median test Sharpe floor + all windows
   # must complete cleanly with disjoint test ranges (enforced by the engine).
+  # UNSPECIFIED (U8 blocker, no value invented): the minimum evaluated-window
+  # count for a statistically meaningful median Sharpe. The engine enforces
+  # only a non-vacuity floor (windows >= 1); medians over <= max_windows
+  # windows carry wide error bars — see decision sheet U8.
   walkforward:
     enabled: true
     train_bars: 60

@@ -514,13 +514,29 @@ class Scheduler:
             return False
         if kind == "walkforward":
             floor = float(cfg.get("min_median_sharpe", 0.0))
-            med = res.get("median_test_sharpe")
-            if med is None or float(med) < floor:
+            try:
+                med = float(res.get("median_test_sharpe"))
+                n_windows = int(res.get("windows", 0))
+            except (TypeError, ValueError):
+                raise fail("BACKTEST_FAILED",
+                           f"{kind} result malformed (median/windows unparsable)")
+            if n_windows < 1:
+                # Non-vacuity fail-closed: zero evaluated windows cannot
+                # support a verdict. This is NOT a statistical sample-size
+                # claim: the minimum-windows threshold for a meaningful
+                # median Sharpe is UNSPECIFIED in approved policy (U8
+                # blocker) — no value is invented here.
+                return False
+            if med < floor:
                 return False
         else:
             cap = float(cfg.get("max_stressed_dd_pct", 10.0))
-            worst = res.get("max_stressed_dd")
-            if worst is None or float(worst) > cap:
+            try:
+                worst = float(res.get("max_stressed_dd"))
+            except (TypeError, ValueError):
+                raise fail("BACKTEST_FAILED",
+                           f"{kind} result malformed (max_stressed_dd unparsable)")
+            if worst > cap:
                 return False
         return True
 
@@ -553,13 +569,17 @@ class Scheduler:
             raise fail("BACKTEST_FAILED",
                        f"backtest infrastructure failure: {bt.get('reason')}")
         bt_ok = bool(bt.get("ok")) and float(bt.get("max_drawdown_pct", 100.0)) <= max_dd
+        wf_cfg = gates.get("walkforward") or {}
+        st_cfg = gates.get("stress") or {}
         decision = {"edge": edge, "min_edge": min_edge, "backtest_ok": bt_ok,
-                    "backtest": bt}
+                    "backtest": bt,
+                    "policy_version": str(gates.get("policy_version", "unknown")),
+                    "gates": {"min_oos_edge_vs_baseline": min_edge,
+                              "max_backtest_drawdown_pct": max_dd,
+                              "walkforward": dict(wf_cfg), "stress": dict(st_cfg)}}
         # Extended gates: walk-forward + stress. Only evaluated when the base
         # gate passes (saves compute); absent/disabled sections mean "not
         # required" so older callers and tests keep prior behavior.
-        wf_cfg = gates.get("walkforward") or {}
-        st_cfg = gates.get("stress") or {}
         wf_ok, st_ok = True, True
         if bt_ok and bars_path and os.path.exists(bars_path):
             if wf_cfg.get("enabled", False):

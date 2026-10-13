@@ -7,6 +7,9 @@ start/stop over the SAME functions as the CLI/TUI. No new framework
   to start (fail closed). Tokens never logged, never in errors.
 - Rate limiting (token bucket per client IP), 64 KiB request cap, audit log
   with redacted credentials, generic error bodies.
+- Operational note: stdlib `HTTPServer` handles one connection at a time, so
+  concurrent local clients are serialized (correct but slow under parallel
+  load). This is an operational property, NOT a security guarantee.
 """
 
 from __future__ import annotations
@@ -127,6 +130,27 @@ class TrainingAPIHandler(BaseHTTPRequestHandler):
         _audit_log(self.server.runs_root,
                    {"route": route, "client": self.client_address[0], "status": code})
 
+    def _int_param(self, value, name: str, default: int, minimum: int, maximum: int):
+        """Controlled integer coercion for request bodies. Returns (ok, value);
+        rejects bools, non-integral floats, non-numeric text, lists/dicts and
+        out-of-range values with 400 instead of leaking a TypeError into a
+        dropped connection. Pure-numeric strings ("30") are accepted."""
+        if value is None:
+            value = default
+        if isinstance(value, bool):
+            self._deny(400, f"invalid {name}: must be an integer")
+            return False, default
+        if not isinstance(value, int):
+            try:
+                value = int(str(value).strip())
+            except (ValueError, TypeError):
+                self._deny(400, f"invalid {name}: must be an integer")
+                return False, default
+        if not minimum <= value <= maximum:
+            self._deny(400, f"invalid {name}: out of range")
+            return False, default
+        return True, value
+
     def do_GET(self) -> None:  # noqa: N802 (http.server convention)
         parsed = urlparse(self.path)
         if not self._guard():
@@ -162,10 +186,14 @@ class TrainingAPIHandler(BaseHTTPRequestHandler):
             return self._deny(400, "invalid JSON body")
         if parsed.path == "/v1/training/start":
             from .cli import _auto_train_impl
+            ok, interval = self._int_param(body.get("interval", 30), "interval",
+                                           30, 10, 3600)
+            if not ok:
+                return
             try:
                 out = _auto_train_impl(runs=self.server.runs_root,
                                        datasets=body.get("datasets"),
-                                       interval=int(body.get("interval", 30)),
+                                       interval=interval,
                                        once=False)
             except Exception as e:
                 self._log_request(500, "/v1/training/start")
@@ -174,10 +202,10 @@ class TrainingAPIHandler(BaseHTTPRequestHandler):
             return self._send(200, {"status": "OK", **out})
         if parsed.path == "/v1/training/stop":
             from .cli import _auto_stop_inner
-            try:
-                timeout = int(body.get("timeout", 300))
-            except ValueError:
-                return self._deny(400, "invalid timeout")
+            ok, timeout = self._int_param(body.get("timeout", 300), "timeout",
+                                          300, 1, 3600)
+            if not ok:
+                return
             summary = _auto_stop_inner(self.server.runs_root, timeout)
             self._log_request(200, "/v1/training/stop")
             return self._send(200, {"status": "OK", **summary})
