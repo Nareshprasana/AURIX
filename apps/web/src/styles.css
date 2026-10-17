@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+/* Dark-first trading-desk theme. Palette only — no framework overrides. */
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-zinc-950);
+  color: var(--color-zinc-100);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-emerald-500);
+  outline-offset: 2px;
+}

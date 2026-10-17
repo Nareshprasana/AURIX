@@ -157,9 +157,27 @@ def _governed(s, ds, acc, base, bt, with_bars=False):
     with open(os.path.join(edir, "eval.json"), "w") as f:
         json.dump({"accuracy": acc, "baseline_majority_accuracy": base,
                    "precision": 0.5, "recall": 0.5, "n": 10}, f)
+    with open(os.path.join(edir, "walkforward_cv.json"), "w") as f:
+        json.dump({
+            "model_type": dd.get("model_type", "sgd-logloss"),
+            "n_windows": 1,
+            "median_edge": 0.05,
+            "experiment_id": eid,
+            "dataset_version": dd.get("dataset_version", "v1.0-test"),
+        }, f)
     s.backtest_runner = lambda b, e: bt
-    s.govern_eligible({"min_oos_edge_vs_baseline": 0.01,
-                       "max_backtest_drawdown_pct": 10.0})
+    s.extended_runner = lambda b, e, m: (
+        {"ok": True, "median_test_sharpe": 1.0, "windows": 1} if m.startswith("walkforward")
+        else {"ok": True, "max_stressed_dd": 1.0}
+    )
+    s.govern_eligible({
+        "policy_version": "v1.0",
+        "min_oos_edge_vs_baseline": 0.01,
+        "max_backtest_drawdown_pct": 10.0,
+        "walkforward": {"enabled": True, "min_median_sharpe": 0.0},
+        "stress": {"enabled": True, "max_stressed_dd_pct": 10.0},
+        "classification_walkforward": {"enabled": True, "min_median_edge": 0.0, "n_windows": 1},
+    })
     return eid, edir
 
 

@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AURIX Local Dashboard (read-only)</title>
+<style>
+  :root { color-scheme: light dark; --ok: #1a7f37; --bad: #b42318; --warn: #9a6700; --muted: #666; }
+  body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 900px; padding: 1rem; }
+  header { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; justify-content: space-between; }
+  .card { border: 1px solid #ccc; border-radius: 8px; padding: .75rem 1rem; margin: .75rem 0; }
+  .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+  .pill { border-radius: 999px; padding: .1rem .6rem; font-size: .85rem; border: 1px solid #ccc; }
+  .ok { color: var(--ok); border-color: var(--ok); } .bad { color: var(--bad); border-color: var(--bad); }
+  .warn { color: var(--warn); border-color: var(--warn); } .muted { color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td { text-align: left; border-bottom: 1px solid #ddd; padding: .25rem .4rem; vertical-align: top; }
+  details { font-size: .85rem; } summary { cursor: pointer; }
+  input[type=password] { padding: .3rem .5rem; max-width: 100%; }
+  button { padding: .35rem .8rem; cursor: pointer; }
+  .bar { background: #eee; border-radius: 4px; height: .6rem; overflow: hidden; }
+  .bar > div { background: var(--ok); height: 100%; }
+  footer { font-size: .8rem; color: var(--muted); margin-top: 1rem; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>AURIX Local Dashboard</h1>
+    <p class="muted">Read-only view of the localhost training service. No controls here can start, stop, or modify training.</p>
+  </div>
+  <div class="row">
+    <span id="conn" class="pill muted">not connected</span>
+    <button id="refresh" type="button" hidden>Refresh</button>
+    <button id="logout" type="button" hidden>Log out</button>
+  </div>
+</header>
+
+<section class="card" id="logincard" aria-label="login" hidden>
+  <h2>Sign in</h2>
+  <p class="muted">Enter the local API token. It is sent once in the login request body and never stored in the browser — the server keeps a short-lived session cookie instead.</p>
+  <form id="loginform">
+    <div class="row">
+      <label>Token <input id="token" type="password" value="" size="24" autocomplete="off"></label>
+      <button type="submit">Sign in</button>
+    </div>
+  </form>
+  <p id="loginerr" class="bad" hidden>Sign-in failed. Check the token and try again.</p>
+</section>
+
+<div id="app" hidden>
+<section class="card" aria-label="connection">
+  <h2>Connection</h2>
+  <p>Last successful refresh: <span id="lastok">never</span> <span id="stale" class="pill warn" hidden>stale data shown</span></p>
+</section>
+
+<section class="card" aria-label="health">
+  <h2>System health</h2>
+  <div id="health"><p class="muted">Press Refresh to load.</p></div>
+</section>
+
+<section class="card" aria-label="training">
+  <h2>Training status</h2>
+  <div id="state"><p class="muted">Press Refresh to load.</p></div>
+</section>
+
+<section class="card" aria-label="events">
+  <h2>Event history</h2>
+  <div id="events"><p class="muted">Press Refresh to load.</p></div>
+</section>
+
+<section class="card" aria-label="unavailable">
+  <h2>Not available in this milestone</h2>
+  <ul>
+    <li>Experiment history, dataset catalog, governance records, portfolio and risk views — no verified read-only API exists for these yet.</li>
+    <li>Training start/stop controls — intentionally absent: this milestone is read-only and must not trigger state-changing operations.</li>
+  </ul>
+</section>
+</div>
+
+<footer>Read-only milestone: this page issues GET requests only, plus sign-in/sign-out. Training start/stop endpoints are never called.</footer>
+
+<script>
+"use strict";
+let lastGood = null;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const TIMEOUT_MS = 8000;
+
+function setConn(kind, text) {
+  const el = $("conn");
+  el.className = "pill " + (kind === "ok" ? "ok" : kind === "bad" ? "bad" : kind === "warn" ? "warn" : "muted");
+  el.textContent = text;
+}
+
+function showLogin() {
+  $("logincard").hidden = false;
+  $("app").hidden = true;
+  $("refresh").hidden = true;
+  $("logout").hidden = true;
+}
+
+function showApp() {
+  $("logincard").hidden = true;
+  $("loginerr").hidden = true;
+  $("token").value = "";
+  $("app").hidden = false;
+  $("refresh").hidden = false;
+  $("logout").hidden = false;
+}
+
+async function api(path, opts) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  try {
+    const r = await fetch(path, Object.assign({ credentials: "same-origin", signal: ctl.signal }, opts || {}));
+    if (r.status === 401) return { conn: "unauthorized" };
+    if (!r.ok) return { conn: "unavailable", detail: "HTTP " + r.status };
+    let body;
+    try { body = await r.json(); }
+    catch (e) { return { conn: "malformed" }; }
+    if (body === null || typeof body !== "object") return { conn: "malformed" };
+    return { conn: "ok", body };
+  } catch (e) {
+    return { conn: "unavailable" };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function renderHealth(body) {
+  if (body === undefined) { $("health").innerHTML = '<p class="muted">No data.</p>'; return; }
+  const status = body.status !== undefined ? esc(body.status) : "<em>missing</em>";
+  const version = body.version !== undefined ? esc(body.version) : "<em>missing</em>";
+  $("health").innerHTML = "<table><tr><th>status</th><td>" + status + "</td></tr>" +
+    "<tr><th>version</th><td>" + version + "</td></tr></table>";
+}
+
+function renderState(body) {
+  if (body === undefined || body === null) { $("state").innerHTML = '<p class="muted">No data.</p>'; return; }
+  const show = ["state", "health", "experiment_id", "dataset_id", "stage", "epoch",
+    "total_epochs", "loss", "validation_loss", "heartbeat_age_seconds",
+    "checkpoint", "started_at", "updated_at", "elapsed_seconds", "error",
+    "recovery_state", "code_version"];
+  let rows = "";
+  for (const k of show) {
+    if (body[k] !== undefined && body[k] !== null) rows += "<tr><th>" + esc(k) + "</th><td>" + esc(typeof body[k] === "object" ? JSON.stringify(body[k]) : body[k]) + "</td></tr>";
+  }
+  let pct = "";
+  if (typeof body.epoch === "number" && typeof body.total_epochs === "number" && body.total_epochs > 0) {
+    const p = Math.max(0, Math.min(100, 100 * body.epoch / body.total_epochs));
+    pct = '<div class="bar"><div style="width:' + p.toFixed(1) + '%"></div></div>';
+  }
+  let stages = "";
+  if (Array.isArray(body.pipeline) && body.pipeline.length) {
+    stages = "<h3>Pipeline</h3><table>" + body.pipeline.map((s) =>
+      "<tr><td>" + esc(s && s.stage !== undefined ? s.stage : "?") + "</td><td>" +
+      esc(s && s.state !== undefined ? s.state : "?") + "</td></tr>").join("") + "</table>";
+  }
+  let last = "";
+  if (body.last_outcome !== undefined && body.last_outcome !== null) {
+    last = "<h3>Last outcome</h3><p>" + esc(typeof body.last_outcome === "object" ? JSON.stringify(body.last_outcome) : body.last_outcome) + "</p>";
+  }
+  $("state").innerHTML = (rows ? "<table>" + rows + "</table>" + pct : '<p class="muted">Empty state.</p>') + stages + last;
+}
+
+function renderEvents(body) {
+  const list = body !== undefined && body !== null ? body.events : undefined;
+  if (!Array.isArray(list) || !list.length) { $("events").innerHTML = '<p class="muted">No events.</p>'; return; }
+  $("events").innerHTML = "<table><tr><th>time</th><th>type</th><th>experiment</th><th>detail</th></tr>" +
+    list.slice().reverse().map((e) => {
+      const t = e && e.timestamp !== undefined ? esc(new Date(e.timestamp).toLocaleString()) : "<em>n/a</em>";
+      const ty = e && e.type !== undefined ? esc(e.type) : "<em>n/a</em>";
+      const id = e && e.experiment_id !== undefined ? esc(e.experiment_id) : "<em>n/a</em>";
+      return "<tr><td>" + t + "</td><td>" + ty + "</td><td>" + id + "</td><td><details><summary>detail</summary>" +
+        esc(JSON.stringify(e)) + "</details></td></tr>";
+    }).join("") + "</table>";
+}
+
+async function refresh() {
+  const h = await api("/api/health");
+  const s = await api("/api/training/state");
+  const e = await api("/api/training/events?last=50");
+  const conns = [h.conn, s.conn, e.conn];
+  if (conns.every((c) => c === "ok")) {
+    setConn("ok", "connected");
+    $("stale").hidden = true;
+    lastGood = new Date();
+    $("lastok").textContent = lastGood.toLocaleString();
+    renderHealth(h.body); renderState(s.body); renderEvents(e.body);
+  } else if (conns.some((c) => c === "unauthorized")) {
+    setConn("warn", "session expired");
+    showLogin();
+    if (lastGood) $("stale").hidden = false;
+  } else if (conns.some((c) => c === "malformed")) {
+    setConn("warn", "malformed response");
+    if (lastGood) $("stale").hidden = false;
+  } else {
+    setConn("bad", "unavailable");
+    if (lastGood) $("stale").hidden = false;
+    else { renderHealth(undefined); renderState(undefined); renderEvents({ events: [] }); }
+  }
+}
+
+$("loginform").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("loginerr").hidden = true;
+  const res = await api("/api/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: $("token").value }),
+  });
+  if (res.conn === "ok") { showApp(); await refresh(); }
+  else { $("loginerr").hidden = false; setConn("warn", "unauthorized"); }
+  $("token").value = "";
+});
+
+$("logout").addEventListener("click", async () => {
+  await api("/api/logout", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  lastGood = null;
+  $("lastok").textContent = "never";
+  setConn("muted", "not connected");
+  showLogin();
+});
+
+$("refresh").addEventListener("click", refresh);
+
+// Bootstrap: a valid session cookie renders the app; otherwise show login.
+(async () => {
+  const h = await api("/api/health");
+  if (h.conn === "ok") { showApp(); await refresh(); }
+  else { showLogin(); if (h.conn !== "unauthorized") setConn(h.conn === "malformed" ? "warn" : "bad", h.conn); }
+})();
+</script>
+</body>
+</html>

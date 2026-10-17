@@ -94,6 +94,13 @@ automation:
   stress:
     enabled: true
     max_stressed_dd_pct: 10.0
+  # Classification walk-forward CV gate: rolling ML classification windows
+  # with train-only scaling, disjoint test ranges, and purge buffer.
+  # Non-negativity sanity check: median out-of-sample edge vs majority baseline.
+  classification_walkforward:
+    enabled: true
+    min_median_edge: 0.0
+    n_windows: 4
   # Optional override for `aurix train` dataset discovery; when absent the
   # newest valid versioned dataset under data/datasets is used.
   # default_dataset_dir: null

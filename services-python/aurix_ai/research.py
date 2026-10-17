@@ -25,10 +25,11 @@ import time
 from .errors import fail
 
 RESEARCH_VERSION = "research-v1"
-SUPPORTED_MODELS = ("sgd-logloss", "logreg-lbfgs")
-SUPPORTED_FEATURES = ("feat-v1",)
+SUPPORTED_MODELS = ("sgd-logloss", "logreg-lbfgs", "torch-mlp")
+SUPPORTED_FEATURES = ("feat-v1", "feat-v2")
 SUPPORTED_LABELS = ("label-v1",)
-SUPPORTED_HP_KEYS = frozenset({"alpha", "learning_rate", "eta0", "random_state"})
+SUPPORTED_HP_KEYS = frozenset({"alpha", "learning_rate", "eta0", "random_state",
+                                "hidden_dims", "lr", "weight_decay", "batch_size", "activation"})
 OUTCOME_CLASSES = ("VALID_IMPROVEMENT", "VALID_NEGATIVE", "INCONCLUSIVE",
                    "DATA_FAILURE", "MODEL_FAILURE", "EVAL_FAILURE",
                    "INFRA_FAILURE", "GOVERNANCE_REJECTED")
@@ -102,6 +103,16 @@ def _read_json(path: str):
             return json.load(f)
     except (OSError, ValueError):
         return None
+
+
+def _manifest_feat_ver(ddir: str | None) -> str:
+    if not ddir or not os.path.isdir(ddir):
+        return "feat-v1"
+    man = _read_json(os.path.join(ddir, "manifest.json"))
+    if man and isinstance(man, dict):
+        return man.get("feature_spec", {}).get("version", "feat-v1")
+    return "feat-v1"
+
 
 
 def classify_outcome(outcome: dict, best_edge: float | None) -> dict:
@@ -209,6 +220,14 @@ def derive_questions(outcomes: list, log: list, datasets: list) -> list:
                         [o["experiment_id"]], "adjustment")
                 if q:
                     questions.append(q)
+        exp_feat = (o.get("manifest") or {}).get("feature_version") or "feat-v1"
+        if exp_feat == "feat-v1":
+            feat2_ds = [d for d in datasets if "feat-v2" in d or _manifest_feat_ver(d) == "feat-v2"]
+            if feat2_ds:
+                q = ask(f"Does feat-v2 feature engineering provide stronger signal than {exp_feat} on {o['experiment_id']}?",
+                        [o["experiment_id"]], "features")
+                if q:
+                    questions.append(q)
     for o in infra:
         q = ask(f"Is the failure of {o['experiment_id']} systematic or transient?",
                 [o["experiment_id"]], "reliability")
@@ -239,6 +258,9 @@ def propose_experiment(question: dict, datasets: list, base_hp: dict,
     if question.get("topic") == "adjustment":
         adj = [d for d in datasets if "adjusted" in d]
         ds = adj[0] if adj else ds
+    elif question.get("topic") == "features":
+        feat2 = [d for d in datasets if "feat-v2" in d or _manifest_feat_ver(d) == "feat-v2"]
+        ds = feat2[0] if feat2 else ds
     if not ds:
         raise fail("DATASET_MISSING", "no dataset available for proposal")
     hp = dict(base_hp or {})
@@ -277,6 +299,7 @@ def validate_proposal(defn: dict, runs_root: str, datasets: list) -> dict:
     if manifest.get("label_spec", {}).get("version") not in SUPPORTED_LABELS:
         raise fail("INVALID_CONFIG", "unsupported label version")
     clean["dataset_version"] = manifest.get("dataset_version")
+    clean["feature_version"] = manifest.get("feature_spec", {}).get("version", "feat-v1")
     clean["epochs"] = int(clean.get("epochs", 5))
     if clean["epochs"] < 1:
         raise fail("INVALID_CONFIG", "epochs must be >= 1")
@@ -312,7 +335,8 @@ def make_hypothesis(question: dict, definition: dict, fingerprint: str,
             "supporting_evidence": question.get("based_on", []),
             "contradicting_evidence": [],
             "dataset_version": definition.get("dataset_version"),
-            "feature_version": SUPPORTED_FEATURES[0], "label_version": SUPPORTED_LABELS[0],
+            "feature_version": definition.get("feature_version") or _manifest_feat_ver(definition.get("dataset_dir")),
+            "label_version": SUPPORTED_LABELS[0],
             "methodology": "chronological train/val/test; train-only scaler; OOS eval",
             "model": definition.get("model_type"),
             "hyperparameters": definition.get("hyperparameters"),

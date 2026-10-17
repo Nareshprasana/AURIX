@@ -76,7 +76,8 @@ def run_worker(exp_dir: str, resume: bool = False) -> int:
                 from .model import load_checkpoint, make_model
                 with _np.load(ckpts[-1], allow_pickle=False) as _z:
                     _solver = str(_z["solver"][0]) if "solver" in _z.files else "sgd"
-                model = make_model("logreg-lbfgs" if _solver == "lbfgs" else "sgd-logloss")
+                m_type = defn.get("model_type") or ("torch-mlp" if _solver in ("torch-mlp", "mlp") else ("logreg-lbfgs" if _solver == "lbfgs" else "sgd-logloss"))
+                model = make_model(m_type, **cfg)
                 meta = load_checkpoint(ckpts[-1], model)
                 epochs_left = max(0, int(defn["epochs"]) - int(meta.get("epoch", 0)))
                 resume_from = None  # state already loaded; run_training must NOT refit scaler

@@ -21,10 +21,25 @@ import numpy as np
 
 from .errors import fail
 
-FEATURE_COLUMNS = ("ret_1", "ret_2", "ret_3", "ret_4", "ret_5", "mom_10", "vol_10", "vol_ratio")
+FEATURE_COLUMNS_V1 = ("ret_1", "ret_2", "ret_3", "ret_4", "ret_5", "mom_10", "vol_10", "vol_ratio")
+FEATURE_COLUMNS_V2 = (
+    "ret_1", "ret_3", "ret_5", "ret_10", "ret_20",
+    "trend_sma_ratio", "vol_10", "vol_20", "vol_ratio",
+    "norm_range", "close_loc", "range_pos_20"
+)
+FEATURE_COLUMNS = FEATURE_COLUMNS_V1
 PREPROCESSING_VERSION = "prep-v1"
 FEATURES_VERSION = "feat-v1"
+FEATURES_VERSION_V2 = "feat-v2"
 LABEL_VERSION = "label-v1"
+
+
+def get_feature_columns(version: str = "feat-v1") -> tuple:
+    if version == "feat-v1":
+        return FEATURE_COLUMNS_V1
+    if version == "feat-v2":
+        return FEATURE_COLUMNS_V2
+    raise fail("INVALID_CONFIG", f"unsupported feature version: {version}")
 
 
 @dataclass(frozen=True)
@@ -38,6 +53,7 @@ class DatasetSpec:
     threshold: float
     start_ts: int
     bar_ms: int = 86_400_000
+    feature_version: str = "feat-v1"
 
 
 def generate_ohlcv(seed: int, n_bars: int, instruments: tuple,
@@ -80,7 +96,8 @@ def validate_bars(bars: dict) -> list:
 
 
 def build_features_labels(bars: dict, horizon: int, threshold: float,
-                          min_rows: int = 50) -> tuple[np.ndarray, np.ndarray, np.ndarray, list]:
+                          min_rows: int = 50,
+                          feature_version: str = "feat-v1") -> tuple[np.ndarray, np.ndarray, np.ndarray, list]:
     """Causal features + forward labels. Returns (X, y, ts, instruments).
 
     Feature at row for bar index t uses closes/volumes with index <= t only.
@@ -88,10 +105,15 @@ def build_features_labels(bars: dict, horizon: int, threshold: float,
     """
     if horizon < 1:
         raise fail("INVALID_LABEL", "horizon must be >= 1")
+    if feature_version not in (FEATURES_VERSION, FEATURES_VERSION_V2):
+        raise fail("INVALID_CONFIG", f"unsupported feature version: {feature_version}")
+
     X_parts, y_parts, ts_parts, inst_parts = [], [], [], []
     for inst, b in bars.items():
         close = np.asarray(b["close"], dtype=float)
         volume = np.asarray(b["volume"], dtype=float)
+        high = np.asarray(b.get("high", close), dtype=float)
+        low = np.asarray(b.get("low", close), dtype=float)
         ts = np.asarray(b["ts"], dtype=np.int64)
         n = len(ts)
         rets = np.empty(n)
@@ -100,12 +122,29 @@ def build_features_labels(bars: dict, horizon: int, threshold: float,
         rows = []
         for t in range(20, n - horizon):
             # All inputs indexed <= t (causal). Nothing at t+1..t+horizon leaks in.
-            f = [
-                rets[t], rets[t - 1], rets[t - 2], rets[t - 3], rets[t - 4],
-                close[t] / close[t - 10] - 1.0,
-                float(np.std(rets[t - 9:t + 1])),
-                float(np.mean(volume[t - 4:t + 1]) / max(1.0, float(np.mean(volume[t - 19:t + 1])))),
-            ]
+            if feature_version == FEATURES_VERSION:
+                f = [
+                    rets[t], rets[t - 1], rets[t - 2], rets[t - 3], rets[t - 4],
+                    close[t] / close[t - 10] - 1.0,
+                    float(np.std(rets[t - 9:t + 1])),
+                    float(np.mean(volume[t - 4:t + 1]) / max(1.0, float(np.mean(volume[t - 19:t + 1])))),
+                ]
+            else:
+                # feat-v2: multi-horizon returns, trend context, volatility & intraday dynamics
+                f = [
+                    rets[t],
+                    close[t] / close[t - 3] - 1.0,
+                    close[t] / close[t - 5] - 1.0,
+                    close[t] / close[t - 10] - 1.0,
+                    close[t] / close[t - 20] - 1.0,
+                    close[t] / float(np.mean(close[t - 19:t + 1])) - 1.0,
+                    float(np.std(rets[t - 9:t + 1])),
+                    float(np.std(rets[t - 19:t + 1])),
+                    float(np.mean(volume[t - 4:t + 1]) / max(1.0, float(np.mean(volume[t - 19:t + 1])))),
+                    float((high[t] - low[t]) / max(close[t], 1e-6)),
+                    float((close[t] - low[t]) / max(high[t] - low[t], 1e-6)),
+                    float((close[t] - np.min(low[t - 19:t + 1])) / max(np.max(high[t - 19:t + 1]) - np.min(low[t - 19:t + 1]), 1e-6)),
+                ]
             fwd = close[t + horizon] / close[t] - 1.0
             rows.append((f, 1 if fwd > threshold else 0, int(ts[t])))
         if rows:
@@ -141,11 +180,12 @@ def chrono_split(n: int, train_frac: float = 0.6, val_frac: float = 0.2):
 
 
 def dataset_version_id(spec: DatasetSpec) -> str:
+    feat_ver = getattr(spec, "feature_version", FEATURES_VERSION)
     h = hashlib.sha256(json.dumps({
         "id": spec.dataset_id, "instruments": list(spec.instruments),
         "n_bars": spec.n_bars, "seed": spec.seed, "horizon": spec.horizon_bars,
         "threshold": spec.threshold, "start": spec.start_ts,
-        "feat": FEATURES_VERSION, "label": LABEL_VERSION,
+        "feat": feat_ver, "label": LABEL_VERSION,
         "prep": PREPROCESSING_VERSION,
     }, sort_keys=True).encode()).hexdigest()[:12]
     return f"{spec.dataset_id}-{h}"
@@ -154,11 +194,13 @@ def dataset_version_id(spec: DatasetSpec) -> str:
 def write_dataset(root: str, spec: DatasetSpec, X: np.ndarray, y: np.ndarray,
                   ts: np.ndarray, instruments: list, extra: dict | None = None) -> dict:
     """Write immutable versioned dataset. Refuses overwrite on checksum mismatch."""
+    feat_ver = getattr(spec, "feature_version", FEATURES_VERSION)
+    cols = get_feature_columns(feat_ver)
     version = dataset_version_id(spec)
     ddir = os.path.join(root, version)
     os.makedirs(ddir, exist_ok=True)
     feat_path = os.path.join(ddir, "features.csv")
-    header = ",".join([*FEATURE_COLUMNS, "label", "ts", "instrument"])
+    header = ",".join([*cols, "label", "ts", "instrument"])
     lines = [header]
     for i in range(len(y)):
         lines.append(",".join([f"{v:.8f}" for v in X[i]] + [str(int(y[i])), str(int(ts[i])), instruments[i]]))
@@ -176,7 +218,7 @@ def write_dataset(root: str, spec: DatasetSpec, X: np.ndarray, y: np.ndarray,
     manifest = {
         "dataset_id": spec.dataset_id, "dataset_version": version,
         "created_at": int(ts[0]), "source": "aurix-synthetic-ohlcv",
-        "feature_spec": {"version": FEATURES_VERSION, "columns": list(FEATURE_COLUMNS),
+        "feature_spec": {"version": feat_ver, "columns": list(cols),
                          "causal": True, "max_lookback_bars": 20},
         "label_spec": {"version": LABEL_VERSION, "definition": "forward return over horizon > threshold",
                        "horizon_bars": spec.horizon_bars, "threshold": spec.threshold},
@@ -209,7 +251,7 @@ def load_dataset(ddir: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list, d
     if hashlib.sha256(raw).hexdigest() != manifest["checksum_sha256"]:
         raise fail("DATASET_CORRUPT", "checksum mismatch on load")
     rows = raw.decode().strip().split("\n")[1:]
-    cols = len(FEATURE_COLUMNS)
+    cols = len(manifest.get("feature_spec", {}).get("columns", FEATURE_COLUMNS))
     X = np.array([[float(v) for v in r.split(",")[:cols]] for r in rows])
     y = np.array([int(r.split(",")[cols]) for r in rows], dtype=np.int64)
     ts = np.array([int(r.split(",")[cols + 1]) for r in rows], dtype=np.int64)

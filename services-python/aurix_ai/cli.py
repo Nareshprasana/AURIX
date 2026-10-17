@@ -30,16 +30,17 @@ def _cmd_dataset(args) -> int:
     from .datasets import (DatasetSpec, build_features_labels, generate_ohlcv,
                            validate_bars, write_dataset)
     instruments = tuple(args.instruments.split(","))
+    feat_ver = getattr(args, "feature_version", "feat-v1")
     spec = DatasetSpec(dataset_id="aurix-synth-daily", version="v1",
                        instruments=instruments, n_bars=args.bars, seed=args.seed,
                        horizon_bars=args.horizon, threshold=args.threshold,
-                       start_ts=1700000000000)
+                       start_ts=1700000000000, feature_version=feat_ver)
     bars = generate_ohlcv(spec.seed, spec.n_bars, spec.instruments, spec.start_ts)
     problems = validate_bars(bars)
     if problems:
         print(json.dumps({"status": "REJECTED", "problems": problems}))
         return 1
-    X, y, ts, inst = build_features_labels(bars, spec.horizon_bars, spec.threshold)
+    X, y, ts, inst = build_features_labels(bars, spec.horizon_bars, spec.threshold, feature_version=feat_ver)
     manifest = write_dataset(args.out, spec, X, y, ts, inst)
     print(json.dumps({"status": "OK", "manifest": manifest}, indent=2))
     return 0
@@ -96,7 +97,9 @@ def _cmd_resume(args) -> int:
     import numpy as _np
     with _np.load(ckpts[-1], allow_pickle=False) as _z:
         _solver = str(_z["solver"][0]) if "solver" in _z.files else "sgd"
-    model = make_model("logreg-lbfgs" if _solver == "lbfgs" else "sgd-logloss")
+    cfg = meta.get("config", {}) if "meta" in locals() else {}
+    m_type = "torch-mlp" if _solver in ("torch-mlp", "mlp") else ("logreg-lbfgs" if _solver == "lbfgs" else "sgd-logloss")
+    model = make_model(m_type)
     meta = load_checkpoint(ckpts[-1], model)
     out = run_training(manifest["run_id"], os.path.dirname(args.run_dir.rstrip("/")),
                        X, y, ds_manifest["dataset_version"],
@@ -114,6 +117,7 @@ def _cmd_evaluate(args) -> int:
     import joblib
     import numpy as np
     from .datasets import chrono_split, load_dataset
+    from .model import predict_proba_from_artifact
     from .train import evaluate_proba
     with open(os.path.join(args.run_dir, "manifest.json")) as f:
         manifest = json.load(f)
@@ -122,12 +126,9 @@ def _cmd_evaluate(args) -> int:
         raise SystemExit("evaluate requires --dataset <dataset-dir>")
     X, y, ts, _inst, ds = load_dataset(dataset_dir)
     art = joblib.load(os.path.join(args.run_dir, "final", "artifact.joblib"))
-    scale = np.sqrt(np.maximum(art["scaler_var"], 1e-12))
-    Xs = (X - art["scaler_mean"]) / scale
-    logits = Xs @ art["coef"].T + art["intercept"]
-    proba = 1.0 / (1.0 + np.exp(-logits.ravel()))
     _tr, _va, te = chrono_split(len(y))
-    oos = evaluate_proba(y[te], proba[te])
+    proba = predict_proba_from_artifact(art, X[te])
+    oos = evaluate_proba(y[te], proba)
     print(json.dumps({"status": "OK", "oos_test": oos,
                       "note": "accuracy is NOT profitability; route through backtest before strategic use"},
                      indent=2))
@@ -234,11 +235,12 @@ def _cmd_history_build(args) -> int:
                 diffs[sym] = {"error": str(e)}
         check = diffs
     bars = to_training_bars(clean_by_symbol)
-    X, y, ts, inst = build_features_labels(bars, args.horizon, args.threshold)
+    feat_ver = getattr(args, "feature_version", "feat-v1")
+    X, y, ts, inst = build_features_labels(bars, args.horizon, args.threshold, feature_version=feat_ver)
     spec = DatasetSpec(dataset_id=args.id, version="v1", instruments=tuple(symbols),
                        n_bars=sum(len(v) for v in clean_by_symbol.values()),
                        seed=7, horizon_bars=args.horizon, threshold=args.threshold,
-                       start_ts=int(min(ts)))
+                       start_ts=int(min(ts)), feature_version=feat_ver)
     manifest = write_dataset(args.out + "/datasets", spec, X, y, ts, inst, extra={
         "source": prov.name, "source_ref": "tejhq/indian-markets + api.tejhq.dev" if args.provider == "tej" else "BennyThadikaran/eod2_data@main",
         "schema_version": "hist-schema-v1",
@@ -312,16 +314,18 @@ def _node_backtest_runner(bars_path: str, exp_dir: str, mode_args: tuple = (),
                           record_name: str = "backtest-run.json") -> dict:
     import subprocess as _sp
     import time as _time
+    import pathlib
     repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     script = os.path.join(repo, "scripts", "backtest-gate.mjs")
     hooks = os.path.join(repo, "scripts", "aurix-register.mjs")
+    hooks_uri = pathlib.Path(hooks).resolve().as_uri()
     record = {"stage": "backtest" if not mode_args else " ".join(mode_args),
               "experiment_id": os.path.basename(exp_dir),
               "worker_name": "backtest-worker", "worker_pid": os.getpid(),
               "started_at": int(_time.time() * 1000), "stdout": "", "stderr": "",
               "exit_code": None, "ended_at": None, "ok": False}
     try:
-        r = _sp.run(["node", "--import", hooks, script, bars_path, *mode_args],
+        r = _sp.run(["node", "--import", hooks_uri, script, bars_path, *mode_args],
                     capture_output=True, text=True, timeout=600, cwd=repo)
         record.update({"stdout": r.stdout or "EMPTY", "stderr": r.stderr or "EMPTY",
                        "exit_code": r.returncode, "ended_at": int(_time.time() * 1000)})
@@ -358,22 +362,8 @@ def _node_gate_runner(bars_path: str, exp_dir: str, mode: str) -> dict:
 
 
 def _load_gates() -> tuple:
-    import yaml
-    policy, auto, gates = {}, {}, {}
-    for cand in ("config/ai-policy.v1.yaml", "../config/ai-policy.v1.yaml"):
-        if os.path.exists(cand):
-            with open(cand) as f:
-                policy = yaml.safe_load(f) or {}
-            break
-    auto = policy.get("automation", {})
-    sched = {"max_concurrent_training": int(auto.get("max_concurrent_training", 1)),
-             "heartbeat_timeout_s": int(auto.get("heartbeat_timeout_s", 600))}
-    gates = {"policy_version": str(policy.get("version", "unknown")),
-             "min_oos_edge_vs_baseline": float(auto.get("min_oos_edge_vs_baseline", 0.01)),
-             "max_backtest_drawdown_pct": float(auto.get("max_backtest_drawdown_pct", 10.0)),
-             "walkforward": dict(auto.get("walkforward", {}) or {}),
-             "stress": dict(auto.get("stress", {}) or {})}
-    return sched, gates
+    from .orchestrate import load_policy_gates
+    return load_policy_gates()
 
 
 def _cmd_auto_cycle(args) -> int:
@@ -898,6 +888,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("dataset"); s.add_argument("--out", required=True)
     s.add_argument("--seed", type=int, default=7); s.add_argument("--bars", type=int, default=750)
     s.add_argument("--horizon", type=int, default=5); s.add_argument("--threshold", type=float, default=0.005)
+    s.add_argument("--feature-version", default="feat-v1", choices=["feat-v1", "feat-v2"])
     s.add_argument("--instruments", default="NSE_EQ_RELIANCE,NSE_EQ_INFY"); s.set_defaults(fn=_cmd_dataset)
     s = sub.add_parser("train"); s.add_argument("--dataset", required=True); s.add_argument("--out", required=True)
     s.add_argument("--run", required=True); s.add_argument("--epochs", type=int, default=5)
@@ -919,6 +910,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--to-date", required=True); s.add_argument("--provider", default="eod2", choices=["tej", "eod2"])
     s.add_argument("--out", required=True); s.add_argument("--id", default="aurix-nse-daily")
     s.add_argument("--horizon", type=int, default=5); s.add_argument("--threshold", type=float, default=0.005)
+    s.add_argument("--feature-version", default="feat-v1", choices=["feat-v1", "feat-v2"])
     s.add_argument("--cross-check", action="store_true"); s.set_defaults(fn=_cmd_history_build)
     s = sub.add_parser("auto-submit"); s.add_argument("--def-json", required=True, dest="def_json"); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_auto_submit)
     s = sub.add_parser("auto-suggest"); s.add_argument("--base-json", default=None); s.add_argument("--budget", type=int, default=None); s.add_argument("--llm-json", default=None); s.add_argument("--runs", default=None); s.set_defaults(fn=_cmd_auto_suggest)

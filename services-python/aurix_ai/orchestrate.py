@@ -15,6 +15,7 @@ from __future__ import annotations
 import glob
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -328,6 +329,140 @@ def default_launcher(exp_dir: str, resume: bool, detach: bool = False) -> subpro
                             stdin=subprocess.DEVNULL,
                             start_new_session=(os.name != "nt"), creationflags=flags)
 
+def validate_governance_gates(gates: dict) -> dict:
+    """Validate that governance gates contain all mandatory blocks and valid types.
+    Fails closed on missing or malformed configuration."""
+    if not isinstance(gates, dict):
+        raise fail("INVALID_CONFIG", f"governance gates must be a dict, got {type(gates).__name__}")
+
+    # 1. Holdout edge floor
+    if "min_oos_edge_vs_baseline" not in gates:
+        raise fail("INVALID_CONFIG", "missing mandatory gate: min_oos_edge_vs_baseline")
+    try:
+        min_edge = float(gates["min_oos_edge_vs_baseline"])
+        if not math.isfinite(min_edge) or min_edge <= 0.0:
+            raise fail("INVALID_CONFIG", f"min_oos_edge_vs_baseline must be positive finite float, got {min_edge}")
+    except (TypeError, ValueError):
+        raise fail("INVALID_CONFIG", f"min_oos_edge_vs_baseline must be numeric, got {gates.get('min_oos_edge_vs_baseline')}")
+
+    # 2. Backtest drawdown cap
+    if "max_backtest_drawdown_pct" not in gates:
+        raise fail("INVALID_CONFIG", "missing mandatory gate: max_backtest_drawdown_pct")
+    try:
+        max_dd = float(gates["max_backtest_drawdown_pct"])
+        if not math.isfinite(max_dd) or max_dd < 0.0 or max_dd > 100.0:
+            raise fail("INVALID_CONFIG", f"max_backtest_drawdown_pct must be in [0.0, 100.0], got {max_dd}")
+    except (TypeError, ValueError):
+        raise fail("INVALID_CONFIG", f"max_backtest_drawdown_pct must be numeric, got {gates.get('max_backtest_drawdown_pct')}")
+
+    # 3. Mandatory walkforward policy block
+    if "walkforward" not in gates or not isinstance(gates["walkforward"], dict) or not gates["walkforward"]:
+        raise fail("INVALID_CONFIG", "missing mandatory policy block: walkforward")
+    wf = gates["walkforward"]
+    if "enabled" not in wf or not isinstance(wf["enabled"], bool):
+        raise fail("INVALID_CONFIG", "walkforward.enabled must be a boolean")
+    if wf["enabled"]:
+        if "min_median_sharpe" in wf:
+            try:
+                floor = float(wf["min_median_sharpe"])
+                if not math.isfinite(floor):
+                    raise fail("INVALID_CONFIG", "walkforward.min_median_sharpe must be finite float")
+            except (TypeError, ValueError):
+                raise fail("INVALID_CONFIG", f"walkforward.min_median_sharpe must be numeric, got {wf.get('min_median_sharpe')}")
+        for int_field in ("train_bars", "test_bars", "step_bars", "max_windows"):
+            if int_field in wf:
+                try:
+                    val = int(wf[int_field])
+                    if val <= 0:
+                        raise fail("INVALID_CONFIG", f"walkforward.{int_field} must be positive int, got {val}")
+                except (TypeError, ValueError):
+                    raise fail("INVALID_CONFIG", f"walkforward.{int_field} must be integer, got {wf.get(int_field)}")
+
+    # 4. Mandatory stress policy block
+    if "stress" not in gates or not isinstance(gates["stress"], dict) or not gates["stress"]:
+        raise fail("INVALID_CONFIG", "missing mandatory policy block: stress")
+    st = gates["stress"]
+    if "enabled" not in st or not isinstance(st["enabled"], bool):
+        raise fail("INVALID_CONFIG", "stress.enabled must be a boolean")
+    if st["enabled"]:
+        if "max_stressed_dd_pct" in st:
+            try:
+                cap = float(st["max_stressed_dd_pct"])
+                if not math.isfinite(cap) or cap < 0.0 or cap > 100.0:
+                    raise fail("INVALID_CONFIG", f"stress.max_stressed_dd_pct must be in [0.0, 100.0], got {cap}")
+            except (TypeError, ValueError):
+                raise fail("INVALID_CONFIG", f"stress.max_stressed_dd_pct must be numeric, got {st.get('max_stressed_dd_pct')}")
+
+    # 5. Mandatory classification_walkforward policy block
+    if "classification_walkforward" not in gates or not isinstance(gates["classification_walkforward"], dict) or not gates["classification_walkforward"]:
+        raise fail("INVALID_CONFIG", "missing mandatory policy block: classification_walkforward")
+    cwf = gates["classification_walkforward"]
+    if "enabled" not in cwf or not isinstance(cwf["enabled"], bool):
+        raise fail("INVALID_CONFIG", "classification_walkforward.enabled must be a boolean")
+    if cwf["enabled"]:
+        if "min_median_edge" in cwf:
+            try:
+                floor = float(cwf["min_median_edge"])
+                if not math.isfinite(floor):
+                    raise fail("INVALID_CONFIG", "classification_walkforward.min_median_edge must be finite float")
+            except (TypeError, ValueError):
+                raise fail("INVALID_CONFIG", f"classification_walkforward.min_median_edge must be numeric, got {cwf.get('min_median_edge')}")
+        if "n_windows" in cwf:
+            try:
+                nw = int(cwf["n_windows"])
+                if nw <= 0:
+                    raise fail("INVALID_CONFIG", f"classification_walkforward.n_windows must be positive int, got {nw}")
+            except (TypeError, ValueError):
+                raise fail("INVALID_CONFIG", f"classification_walkforward.n_windows must be integer, got {cwf.get('n_windows')}")
+
+    return gates
+
+
+def load_policy_gates(policy_path: str | None = None) -> tuple[dict, dict]:
+    """Load canonical scheduler config and governance gates from approved policy.
+    Fails closed if the policy file is missing, unreadable, or malformed."""
+    import yaml
+    policy_candidates = [policy_path] if policy_path else [
+        "config/ai-policy.v1.yaml",
+        "../config/ai-policy.v1.yaml",
+        os.path.join(repo_root(), "config", "ai-policy.v1.yaml"),
+    ]
+    policy_file = None
+    for cand in policy_candidates:
+        if cand and os.path.exists(cand):
+            policy_file = cand
+            break
+
+    if not policy_file:
+        raise fail("INVALID_CONFIG", f"canonical policy file not found in candidates: {policy_candidates}")
+
+    try:
+        with open(policy_file) as f:
+            policy = yaml.safe_load(f) or {}
+    except Exception as e:
+        raise fail("INVALID_CONFIG", f"failed to load policy from {policy_file}: {e}")
+
+    auto = policy.get("automation")
+    if not isinstance(auto, dict):
+        raise fail("INVALID_CONFIG", f"policy {policy_file} missing 'automation' section")
+
+    sched_cfg = {
+        "max_concurrent_training": int(auto.get("max_concurrent_training", 1)),
+        "heartbeat_timeout_s": int(auto.get("heartbeat_timeout_s", 600)),
+    }
+
+    gates = {
+        "policy_version": str(policy.get("version", "ai-policy.v1")),
+        "min_oos_edge_vs_baseline": float(auto.get("min_oos_edge_vs_baseline", 0.01)),
+        "max_backtest_drawdown_pct": float(auto.get("max_backtest_drawdown_pct", 10.0)),
+        "require_backtest_completed": bool(auto.get("require_backtest_completed", True)),
+        "walkforward": dict(auto.get("walkforward") or {}),
+        "stress": dict(auto.get("stress") or {}),
+        "classification_walkforward": dict(auto.get("classification_walkforward") or {}),
+    }
+
+    return sched_cfg, validate_governance_gates(gates)
+
 
 class Scheduler:
     def __init__(self, root: str, policy: dict, launcher=None, backtest_runner=None,
@@ -449,6 +584,7 @@ class Scheduler:
     # -- stage 3: evaluate ---------------------------------------------------
     def evaluate(self, eid: str) -> dict:
         from .datasets import chrono_split, load_dataset
+        from .model import predict_proba_from_artifact
         from .train import evaluate_proba
         import joblib
         import numpy as np
@@ -457,11 +593,9 @@ class Scheduler:
         emit_event(edir, eid, "EVALUATION_STARTED", {})
         X, y, _ts, _inst, _ds = load_dataset(exp["definition"]["dataset_dir"])
         art = joblib.load(os.path.join(edir, "final", "artifact.joblib"))
-        scale = np.sqrt(np.maximum(art["scaler_var"], 1e-12))
-        proba = 1.0 / (1.0 + np.exp(-((X - art["scaler_mean"]) / scale @ art["coef"].T
-                                        + art["intercept"]).ravel()))
         _tr, _va, te = chrono_split(len(y))
-        ev = evaluate_proba(y[te], proba[te])
+        proba = predict_proba_from_artifact(art, X[te])
+        ev = evaluate_proba(y[te], proba)
         with open(os.path.join(edir, "eval.json"), "w") as f:
             json.dump(ev, f, indent=2, sort_keys=True)
         self.reg.transition(eid, "EVALUATED", f"oos acc={ev['accuracy']:.4f} n={ev['n']}")
@@ -540,13 +674,23 @@ class Scheduler:
                 return False
         return True
 
-    def govern(self, eid: str, gates: dict) -> dict:
+    def govern(self, eid: str, gates: dict | None = None) -> dict:
         from .registry import ModelRegistry
+        if gates is None:
+            _, gates = load_policy_gates()
+        else:
+            gates = validate_governance_gates(gates)
+
         exp = self.reg.get(eid)
         edir = self._exp_dir(eid)
-        ev = json.load(open(os.path.join(edir, "eval.json")))
-        edge = ev["accuracy"] - ev["baseline_majority_accuracy"]
-        min_edge = float(gates.get("min_oos_edge_vs_baseline", 0.01))
+        eval_path = os.path.join(edir, "eval.json")
+        if not os.path.exists(eval_path):
+            raise fail("BACKTEST_FAILED", f"canonical eval missing for {eid}: {eval_path}")
+        ev = json.load(open(eval_path))
+        edge = float(ev["accuracy"] - ev["baseline_majority_accuracy"])
+        min_edge = float(gates["min_oos_edge_vs_baseline"])
+        edge_ok = (edge >= min_edge)
+
         bt = None
         bars_path = exp["definition"].get("backtest_bars")
         emit_event(edir, eid, "BACKTEST_STARTED", {"bars": bars_path})
@@ -561,7 +705,7 @@ class Scheduler:
         with open(os.path.join(edir, "backtest.json"), "w") as f:
             json.dump(bt, f, indent=2, sort_keys=True)
         emit_event(edir, eid, "BACKTEST_COMPLETED", {"ok": bool(bt.get("ok"))})
-        max_dd = float(gates.get("max_backtest_drawdown_pct", 10.0))
+        max_dd = float(gates["max_backtest_drawdown_pct"])
         if bt.get("infra_error"):
             # The gate itself broke (crash/empty output) — that is an
             # infrastructure failure, NOT a governance rejection. Fail so it
@@ -569,42 +713,195 @@ class Scheduler:
             raise fail("BACKTEST_FAILED",
                        f"backtest infrastructure failure: {bt.get('reason')}")
         bt_ok = bool(bt.get("ok")) and float(bt.get("max_drawdown_pct", 100.0)) <= max_dd
-        wf_cfg = gates.get("walkforward") or {}
-        st_cfg = gates.get("stress") or {}
-        decision = {"edge": edge, "min_edge": min_edge, "backtest_ok": bt_ok,
-                    "backtest": bt,
-                    "policy_version": str(gates.get("policy_version", "unknown")),
-                    "gates": {"min_oos_edge_vs_baseline": min_edge,
-                              "max_backtest_drawdown_pct": max_dd,
-                              "walkforward": dict(wf_cfg), "stress": dict(st_cfg)}}
-        # Extended gates: walk-forward + stress. Only evaluated when the base
-        # gate passes (saves compute); absent/disabled sections mean "not
-        # required" so older callers and tests keep prior behavior.
-        wf_ok, st_ok = True, True
-        if bt_ok and bars_path and os.path.exists(bars_path):
-            if wf_cfg.get("enabled", False):
-                wf_ok = self._extended_gate(eid, edir, bars_path, "walkforward",
-                                            wf_cfg, decision)
-            if wf_ok and st_cfg.get("enabled", False):
-                st_ok = self._extended_gate(eid, edir, bars_path, "stress",
-                                            st_cfg, decision)
+
+        wf_cfg = gates["walkforward"]
+        st_cfg = gates["stress"]
+        decision = {
+            "edge": edge,
+            "min_edge": min_edge,
+            "edge_ok": edge_ok,
+            "backtest_ok": bt_ok,
+            "backtest": bt,
+            "policy_version": str(gates.get("policy_version", "unknown")),
+            "gates": dict(gates),
+        }
+
+        # Check and enforce classification walk-forward cross validation
+        cwf_cfg = gates["classification_walkforward"]
+        cwf_ok = False
+
+        if not cwf_cfg.get("enabled"):
+            decision["classification_walkforward"] = {
+                "ok": False,
+                "reason": "classification walkforward gate disabled in policy; mandatory for validation",
+            }
+            cwf_ok = False
+        else:
+            wf_cv_path = os.path.join(edir, "walkforward_cv.json")
+            if not os.path.exists(wf_cv_path):
+                decision["classification_walkforward"] = {
+                    "ok": False,
+                    "reason": f"classification walkforward evidence missing: {wf_cv_path}",
+                }
+                cwf_ok = False
+            else:
+                try:
+                    wf_cv = json.load(open(wf_cv_path))
+                except Exception as e:
+                    decision["classification_walkforward"] = {
+                        "ok": False,
+                        "reason": f"classification walkforward evidence malformed: {e}",
+                    }
+                    wf_cv = None
+                    cwf_ok = False
+
+                if wf_cv is not None:
+                    decision["walkforward_cv"] = wf_cv
+                    # Provenance and configuration validation:
+                    expected_mtype = exp.get("definition", {}).get("model_type")
+                    reported_mtype = wf_cv.get("model_type")
+
+                    expected_eid = eid
+                    reported_eid = wf_cv.get("experiment_id")
+
+                    expected_ds = exp.get("definition", {}).get("dataset_version")
+                    reported_ds = wf_cv.get("dataset_version")
+
+                    req_windows = int(cwf_cfg.get("n_windows", 1))
+                    rep_windows = int(wf_cv.get("n_windows", 0))
+
+                    if reported_mtype and reported_mtype != expected_mtype:
+                        decision["classification_walkforward"] = {
+                            "ok": False,
+                            "reason": f"model_type mismatch in walkforward_cv: {reported_mtype} != {expected_mtype}",
+                        }
+                        cwf_ok = False
+                    elif reported_eid and reported_eid != expected_eid:
+                        decision["classification_walkforward"] = {
+                            "ok": False,
+                            "reason": f"experiment_id mismatch in walkforward_cv: {reported_eid} != {expected_eid}",
+                        }
+                        cwf_ok = False
+                    elif reported_ds and reported_ds != expected_ds:
+                        decision["classification_walkforward"] = {
+                            "ok": False,
+                            "reason": f"dataset_version mismatch in walkforward_cv: {reported_ds} != {expected_ds}",
+                        }
+                        cwf_ok = False
+                    elif rep_windows < req_windows:
+                        decision["classification_walkforward"] = {
+                            "ok": False,
+                            "reason": f"insufficient evaluated windows: {rep_windows} < {req_windows}",
+                        }
+                        cwf_ok = False
+                    elif "median_edge" not in wf_cv:
+                        decision["classification_walkforward"] = {
+                            "ok": False,
+                            "reason": "median_edge missing in walkforward_cv",
+                        }
+                        cwf_ok = False
+                    else:
+                        med_edge = float(wf_cv["median_edge"])
+                        min_med_edge = float(cwf_cfg.get("min_median_edge", 0.0))
+                        if med_edge < min_med_edge:
+                            decision["classification_walkforward"] = {
+                                "ok": False,
+                                "reason": f"median edge {med_edge:.4f} < floor {min_med_edge:.4f}",
+                                "median_edge": med_edge,
+                                "mean_edge": wf_cv.get("mean_edge"),
+                                "windows": rep_windows,
+                            }
+                            cwf_ok = False
+                        else:
+                            decision["classification_walkforward"] = {
+                                "ok": True,
+                                "median_edge": med_edge,
+                                "mean_edge": wf_cv.get("mean_edge"),
+                                "windows": rep_windows,
+                            }
+                            cwf_ok = True
+
+        # Extended gates: walk-forward + stress. Fail-closed:
+        wf_ok = False
+        st_ok = False
+
+        if not wf_cfg.get("enabled"):
+            decision["walkforward"] = {"ok": False, "reason": "walkforward gate disabled in policy; mandatory for validation"}
+            wf_ok = False
+        elif not (bars_path and os.path.exists(bars_path)):
+            decision["walkforward"] = {"ok": False, "reason": f"walkforward bars missing at gate time: {bars_path}"}
+            wf_ok = False
+        elif not bt_ok:
+            decision["walkforward"] = {"ok": False, "reason": "base backtest failed; walkforward gate skipped"}
+            wf_ok = False
+        else:
+            wf_ok = self._extended_gate(eid, edir, bars_path, "walkforward", wf_cfg, decision)
+
+        if not st_cfg.get("enabled"):
+            decision["stress"] = {"ok": False, "reason": "stress gate disabled in policy; mandatory for validation"}
+            st_ok = False
+        elif not (bars_path and os.path.exists(bars_path)):
+            decision["stress"] = {"ok": False, "reason": f"stress bars missing at gate time: {bars_path}"}
+            st_ok = False
+        elif not (bt_ok and wf_ok):
+            decision["stress"] = {"ok": False, "reason": "prior gates failed; stress gate skipped"}
+            st_ok = False
+        else:
+            st_ok = self._extended_gate(eid, edir, bars_path, "stress", st_cfg, decision)
+
         mreg = ModelRegistry(os.path.join(self.root, "model-registry.json"))
         model_id = f"aurix-marketml-{eid}"
-        if edge >= min_edge and bt_ok and wf_ok and st_ok:
+
+        if edge_ok and bt_ok and wf_ok and st_ok and cwf_ok:
+            passed_parts = [
+                f"oos edge {edge:.4f} >= {min_edge:.4f}",
+                f"backtest dd {bt.get('max_drawdown_pct', 0.0):.1f}% <= {max_dd:.1f}%",
+            ]
+            wf_med = decision.get("walkforward", {}).get("median_test_sharpe")
+            if wf_med is not None:
+                passed_parts.append(f"wf median Sharpe {float(wf_med):.2f} >= {float(wf_cfg.get('min_median_sharpe', 0.0)):.2f}")
+            else:
+                passed_parts.append("wf ok")
+            st_worst = decision.get("stress", {}).get("max_stressed_dd")
+            if st_worst is not None:
+                passed_parts.append(f"stress max DD {float(st_worst):.1f}% <= {float(st_cfg.get('max_stressed_dd_pct', 10.0)):.1f}%")
+            else:
+                passed_parts.append("stress ok")
+            cwf_med = decision.get("classification_walkforward", {}).get("median_edge")
+            if cwf_med is not None:
+                passed_parts.append(f"classification wf median edge {float(cwf_med):.4f} >= {float(cwf_cfg.get('min_median_edge', 0.0)):.4f}")
+            else:
+                passed_parts.append("classification wf ok")
+            success_reason = "; ".join(passed_parts)
+
             if model_id not in mreg.models:
                 art_sha = json.load(open(os.path.join(edir, "manifest.json")))["artifact_sha256"]
                 mreg.register(model_id, eid, art_sha, "orchestrator")
-            mreg.promote(model_id, "VALIDATED", "orchestrator",
-                         f"oos edge {edge:.4f} >= {min_edge}; backtest+wf+stress ok")
-            self.reg.transition(eid, "VALIDATED", f"edge={edge:.4f} backtest+wf+stress ok")
+            if mreg.models.get(model_id, {}).get("state") != "VALIDATED":
+                mreg.promote(model_id, "VALIDATED", "orchestrator", success_reason)
+            self.reg.transition(eid, "VALIDATED", success_reason)
             emit_event(edir, eid, "MODEL_VALIDATED", decision)
             decision["outcome"] = "VALIDATED"
         else:
-            self.reg.transition(eid, "REJECTED",
-                                f"edge={edge:.4f} (min {min_edge}) backtest_ok={bt_ok} "
-                                f"wf_ok={wf_ok} stress_ok={st_ok}")
+            failed_reasons = []
+            if not edge_ok:
+                failed_reasons.append(f"edge={edge:.4f} < min {min_edge:.4f}")
+            if not bt_ok:
+                failed_reasons.append(f"backtest_ok={bt_ok} (dd={bt.get('max_drawdown_pct')}%)")
+            if not wf_ok:
+                wf_reason = decision.get("walkforward", {}).get("reason") or f"wf_ok={wf_ok}"
+                failed_reasons.append(f"wf: {wf_reason}")
+            if not st_ok:
+                st_reason = decision.get("stress", {}).get("reason") or f"stress_ok={st_ok}"
+                failed_reasons.append(f"stress: {st_reason}")
+            if not cwf_ok:
+                cwf_reason = decision.get("classification_walkforward", {}).get("reason") or f"cwf_ok={cwf_ok}"
+                failed_reasons.append(f"classification_wf: {cwf_reason}")
+            reject_reason = "; ".join(failed_reasons)
+            self.reg.transition(eid, "REJECTED", reject_reason)
             emit_event(edir, eid, "GOVERNANCE_REJECTED", decision)
             decision["outcome"] = "REJECTED"
+
         with open(os.path.join(edir, "governance.json"), "w") as f:
             json.dump(decision, f, indent=2, sort_keys=True)
         with open(os.path.join(edir, "knowledge_refs.jsonl"), "a") as f:
@@ -613,7 +910,7 @@ class Scheduler:
                                          "edge": edge}}) + "\n")
         return decision
 
-    def govern_eligible(self, gates: dict) -> list:
+    def govern_eligible(self, gates: dict | None = None) -> list:
         done = []
         for eid, exp in list(self.reg.exps.items()):
             if exp["status"] == "EVALUATED":
@@ -622,6 +919,8 @@ class Scheduler:
                     done.append(eid)
                 except Exception as e:
                     self.reg.transition(eid, "FAILED", f"governance failed: {e}")
+                    emit_event(self._exp_dir(eid), eid, "GOVERNANCE_FAILED",
+                               {"reason": str(e)})
         return done
 
     def cycle(self, detach: bool = False, gates: dict | None = None) -> dict:
